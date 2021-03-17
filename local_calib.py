@@ -3,10 +3,7 @@ import local_builder as lb
 import numpy as np, seaborn as sns, pandas as pd
 import matplotlib.pyplot as plt
 from collections import Counter
-from SALib.sample import saltelli
-from SALib.analyze import sobol
-from SALib.analyze import morris, rbd_fast
-from SALib.plotting.morris import horizontal_bar_plot, covariance_plot, sample_histograms
+from scipy.stats import pearsonr
 
 start_time = time.time()
 test_path = os.path.join(os.getcwd(), lb.CaseName)
@@ -315,7 +312,7 @@ def passed_cases_all_buildings(error_dict, alpha):
     # plt.close()
 
 
-def compare_results(buildings, simulations, measurements, area, alpha, plots):
+def get_simulation_runs(buildings, simulations):
     # prepare simulation results to compare - - -
     heat_el_result = {}  # Hot water consumption is not included!
     total_sim_result = {}
@@ -336,6 +333,12 @@ def compare_results(buildings, simulations, measurements, area, alpha, plots):
                     heat_el_result[nbr][bn].append(value)
                     tmp += value
             total_sim_result[nbr].update({bn: tmp})
+    return total_sim_result
+
+
+def compare_results(buildings, simulations, measurements, area, alpha, plots):
+    # prepare simulation results to compare - - -
+    total_sim_result = get_simulation_runs(buildings, simulations)
 
     # - - - - - - - - - - - - - - - -
     reference = {}  # from measurements
@@ -355,8 +358,8 @@ def compare_results(buildings, simulations, measurements, area, alpha, plots):
             # comment the line below out in case of many buildings!
             # passed_cases_one_building(errors, nbr, alpha)
             pass
-    # if plots:
-    passed_cases_all_buildings(errors, alpha)
+    if plots:
+        passed_cases_all_buildings(errors, alpha)
 
     # KEEP acceptable buildings with respect to alpha!
     acceptable = {}
@@ -365,6 +368,13 @@ def compare_results(buildings, simulations, measurements, area, alpha, plots):
         acceptable.update({nbr: temp})
 
     return total_sim_result, reference, errors, acceptable
+
+
+def get_correlation(x1, y1, **kws):
+    (r, p) = pearsonr(x1, y1)
+    ax = plt.gca()
+    ax.annotate("r={:.2f}".format(r), xy=(.1, .9), xycoords=ax.transAxes)
+    ax.annotate("p={:.3f}".format(p), xy=(.1, .8), xycoords=ax.transAxes)
 
 
 def make_joint_distribution(buildings, acceptable, plots):
@@ -390,15 +400,17 @@ def make_joint_distribution(buildings, acceptable, plots):
     df = pd.DataFrame(accepted_ranges)
 
     if plots:
-        # print(f'{df}')
-        # TODO: seaborn can do better, FIX IT!
         # https://seaborn.pydata.org/tutorial/color_palettes.html
-        g = sns.pairplot(df, hue="Buildings", palette="tab10", diag_kind="kde", height=1.5)
+        df.loc[:, 'Buildings'] = 'Explained'
+        g = sns.pairplot(df, hue="Buildings", palette="Paired", diag_kind="kde", height=1.5)
         g.map_diag(sns.histplot)
         g.map_offdiag(sns.regplot)
         fig = plt.gcf()
-        fig.canvas.set_window_title(f'Distribution of validated parameters')
+        fig.canvas.set_window_title(f'Possible correlations among {df.shape[0]}'
+                                    f' validated combination of parameters')
         g.fig.set_size_inches(10, 7)
+        g.map(get_correlation)
+        # g._legend.remove()
         plt.show()
         # plt.show(block=False)
         # plt.pause(plot_time * 6)
@@ -408,77 +420,6 @@ def make_joint_distribution(buildings, acceptable, plots):
 
     print(f'\t+ Joint distribution method is over!')
     return df
-
-
-def prepare_sensitivity_requirements(name, bounds, inputs, outputs):
-    """
-    This method retrieves random-numbers generated for simulation cases as well as the results
-    from simulation runs. The return values are ready to pass sensitivity analysis methods in SALib.
-    # https://salib.readthedocs.io/en/latest/
-    # https://stackoverflow.com/questions/41045699/performing-a-sensitivity-analysis-with-python
-    """
-    problem = {'names': name, 'bounds': bounds, 'num_vars': len(name)}
-
-    x = []
-    y = []
-    for building in inputs.keys():
-        for case in inputs[building].keys():
-            x.append(inputs[building][case])
-            y.append(outputs[building][case])
-
-    x = np.array(x)
-    y = np.array(y)
-    return problem, x, y
-
-
-def run_morris_analysis(problem, x, y):
-    """
-    Results are:
-    mu - the mean elementary effect
-    mu_star - the absolute of the mean elementary effect
-    sigma - the standard deviation of the elementary effect
-    mu_star_conf - the bootstrapped confidence interval
-    """
-
-    print(f'\t- The start of Morris sensitivity analysis method ...')
-    Si = morris.analyze(problem, x, y, print_to_console=True, num_levels=10, num_resamples=100)
-
-    fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
-    fig1.canvas.set_window_title(f'MORRIS > the total effects of the input factors!')
-    horizontal_bar_plot(ax1, Si, {}, sortby='mu_star', unit=r'')
-    covariance_plot(ax2, Si, {}, unit=r"")
-
-    # fig2 = plt.figure(figsize=(10, 4))
-    # fig2.canvas.set_window_title(f'Histograms of the input samples for different parameters!')
-    # sample_histograms(fig2, x, problem, {'color': 'dodgerblue'})
-
-    print(f'\t+ Morris sensitivity analysis method is over!')
-    plt.show()
-
-
-def run_rbd_fast_analysis(problem, x, y):
-    """
-    Based ob SALib package
-    Result is a dictionary with keys ‘S1’, where each entry is a list of size D
-    (the number of parameters) containing the indices in the same order as the parameter file.
-    """
-    print(f'\t- The start of RDB FAST sensitivity analysis method ...')
-    Si = rbd_fast.analyze(problem, x, y, print_to_console=True)
-
-    labels = Si['names']
-    sizes = np.abs(Si['S1'])
-    explode = np.zeros(len(labels))
-    idx = np.where(sizes == np.max(sizes))
-    explode[idx] = 0.05
-
-    fig1, ax1 = plt.subplots()
-    ax1.pie(sizes, explode=explode, labels=labels, autopct='%1.1f%%',
-            normalize=True, shadow=False, startangle=90)
-    ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-
-    print(f'\t+ RDB FAST sensitivity analysis method is over!')
-    fig1.canvas.set_window_title(f'RDB-FAST > first order of input factors!')
-    plt.show()
 
 
 def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=5, beta=85, discrete=5, plots=True):
@@ -530,25 +471,13 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
     joint_dist = make_joint_distribution(buildings, acceptable, plots)
     print(f'joint_dist:\n{joint_dist}')
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
-    # Decide what parameters to send for final simulations!
-    problem, x, y = prepare_sensitivity_requirements(lb.VarName2Change, lb.Bounds, params_build, total_sim_results)
-    run_morris_analysis(problem, x, y)
-    run_rbd_fast_analysis(problem, x, y)
-
 
     # TODO: Send the result back to local_builder for simulations with θ'
 
     print(f'+ Calibration method is over!')
     return 0
 
-
-def
-
-# plot_time = 5  # plots terminate in a plot_time by a multiplayer!
-calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum, alpha=10, beta=90, discrete=5,
-                           plots=True)
-
-# - - - - - - - - - - - -
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # TODO: A quick and small comparison of random generation methods
 from skopt.sampler import Sobol, Lhs
 from skopt.space import Space
@@ -588,7 +517,12 @@ def generate_randomness(dimensions, nbr_samples):
 # space = Space([(0., 1.)])
 # generate_randomness(space.dimensions, 10)
 
-# - - - - - - - - - - - -
+# CALIBRATION RUN * * * * * * * *
+if __name__ == '__main__':
+    # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
+    calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
+                               alpha=12, beta=90, discrete=5, plots=True)
 
-print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
-      f" {round(((time.time() - start_time) / 60), 2)}min!")
+    print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
+          f" {round(((time.time() - start_time) / 60), 2)}min!")
+
