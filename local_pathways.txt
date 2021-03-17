@@ -1,0 +1,3 @@
+Buildingsfile:/home/naeim/Documents/Xavier/database_input_files/Buildings.geojson
+Shadingsfile:/home/naeim/Documents/Xavier/database_input_files/Walls.geojson
+epluspath:/usr/local/EnergyPlus-9-4-0/
