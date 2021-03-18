@@ -380,8 +380,7 @@ def get_correlation(x1, y1, **kws):
 def make_joint_distribution(buildings, acceptable, plots):
     print(f'\t- The start of Joint distribution method ...')
     os.chdir(res_path)
-    accepted_ranges = {}
-    accepted_ranges['Buildings'] = []
+    accepted_ranges = {'Buildings': []}
     for b in buildings:
         to_open = list(acceptable[b].keys())
         for tmp in to_open:
@@ -401,12 +400,15 @@ def make_joint_distribution(buildings, acceptable, plots):
 
     if plots:
         # https://seaborn.pydata.org/tutorial/color_palettes.html
-        df.loc[:, 'Buildings'] = 'Explained'
-        g = sns.pairplot(df, hue="Buildings", palette="Paired", diag_kind="kde", height=1.5)
-        g.map_diag(sns.histplot)
-        g.map_offdiag(sns.regplot)
+        df_tmp = df.copy()
+        df_tmp.loc[:, 'Buildings'] = 'Explained'
+        g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
+        g.map_diag(sns.histplot, hue=None, color=".3")
+        # g.map_offdiag(sns.regplot)
+        g.map_upper(sns.regplot)
+        g.map_lower(sns.kdeplot, levels=5, color="k", shade=True)
         fig = plt.gcf()
-        fig.canvas.set_window_title(f'Possible correlations among {df.shape[0]}'
+        fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
                                     f' validated combination of parameters')
         g.fig.set_size_inches(10, 7)
         g.map(get_correlation)
@@ -420,6 +422,42 @@ def make_joint_distribution(buildings, acceptable, plots):
 
     print(f'\t+ Joint distribution method is over!')
     return df
+
+
+def plot_joint_distributions(data_frame):
+    del data_frame['Buildings']
+
+    sns.set_theme(style="white")
+    cmap = sns.cubehelix_palette(light=1.5, as_cmap=True)
+
+    header = list(data_frame.columns)
+    graph = {}
+    for i in range(len(header) - 1):
+        graph[f'g{i + 1}'] = None
+
+    i = 0
+    for key in graph:
+        graph[key] = sns.JointGrid(data=data_frame, x=header[0], y=header[i + 1], space=0)
+        graph[key].plot_joint(sns.kdeplot, fill=True, clip=((lb.Bounds[0]), (lb.Bounds[i + 1])),
+                              thresh=0, levels=5, cmap=cmap).plot_joint(sns.scatterplot)
+        graph[key].plot_marginals(sns.histplot, color="gray", alpha=1, bins=5)
+        graph[key].savefig(f'{key}.png')
+        plt.close(fig=None)
+        i += 1
+
+    fig, ax = plt.subplots(nrows=1, ncols=len(header) - 1, figsize=(10, 4))
+    i = 0
+    for key in graph.keys():
+        ax[i].imshow(plt.imread(f'{key}.png'))
+        i += 1
+
+    fig.canvas.set_window_title(f'A kernel density estimate of validated combination of parameters')
+    [ax.set_axis_off() for ax in ax.ravel()]
+    plt.tight_layout()
+    plt.show()
+
+    for key in graph.keys():
+        os.remove(f'{key}.png')
 
 
 def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=5, beta=85, discrete=5, plots=True):
@@ -469,7 +507,8 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
 
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
     joint_dist = make_joint_distribution(buildings, acceptable, plots)
-    print(f'joint_dist:\n{joint_dist}')
+    plot_joint_distributions(joint_dist)
+
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
 
     # TODO: Send the result back to local_builder for simulations with θ'
@@ -477,52 +516,12 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
     print(f'+ Calibration method is over!')
     return 0
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-# TODO: A quick and small comparison of random generation methods
-from skopt.sampler import Sobol, Lhs
-from skopt.space import Space
-
-
-def generate_randomness(dimensions, nbr_samples):
-    """
-    The purpose of this method is to check the randomness of different algorithms, such as:
-    Sobol, different flavors of LHC, MCMC, Hammersly, Morris and Halton but under a reasonably low number of sampling
-    """
-
-    fig, ax = plt.subplots(nrows=4, ncols=1)
-    ref = 0
-
-    plt.subplot(4, 1, 1)
-    sobol = Sobol()
-    sb = sobol.generate(dimensions, nbr_samples)
-    plt.plot(sb, np.zeros_like(sb) + ref, 'ko', label='Sobol')
-    plt.title("Sobol")
-    plt.grid()
-
-    plt.subplot(4, 1, 2)
-    lhs = Lhs(lhs_type="classic", criterion=None)
-    classic = lhs.generate(space.dimensions, nbr_samples)
-    plt.plot(classic, np.zeros_like(classic) + ref, 'ro', label='classic lhc')
-    plt.title("Classic Latin hypercube")
-    plt.grid()
-
-    plt.subplot(4, 1, 3)
-
-    plt.subplot(4, 1, 4)
-
-    plt.grid()
-    plt.show()
-
-
-# space = Space([(0., 1.)])
-# generate_randomness(space.dimensions, 10)
 
 # CALIBRATION RUN * * * * * * * *
 if __name__ == '__main__':
     # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
     calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-                               alpha=12, beta=90, discrete=5, plots=True)
+                               alpha=15, beta=90, discrete=5, plots=True)
 
     print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
           f" {round(((time.time() - start_time) / 60), 2)}min!")
-

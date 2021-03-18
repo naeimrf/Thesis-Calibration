@@ -92,3 +92,44 @@ run_rbd_fast_analysis(problem, x, y)
 
 print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
       f" {round(((time.time() - start_time) / 60), 2)}min!")
+
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+# TODO: A quick and small comparison of random generation methods
+from skopt.sampler import Sobol, Lhs
+from skopt.space import Space
+
+
+def generate_randomness(dimensions, nbr_samples):
+    """
+    The purpose of this method is to check the randomness of different algorithms, such as:
+    Sobol, different flavors of LHC, MCMC, Hammersly, Morris and Halton but under a reasonably low number of sampling
+    """
+
+    fig, ax = plt.subplots(nrows=4, ncols=1)
+    ref = 0
+
+    plt.subplot(4, 1, 1)
+    sobol = Sobol()
+    sb = sobol.generate(dimensions, nbr_samples)
+    plt.plot(sb, np.zeros_like(sb) + ref, 'ko', label='Sobol')
+    plt.title("Sobol")
+    plt.grid()
+
+    plt.subplot(4, 1, 2)
+    lhs = Lhs(lhs_type="classic", criterion=None)
+    classic = lhs.generate(space.dimensions, nbr_samples)
+    plt.plot(classic, np.zeros_like(classic) + ref, 'ro', label='classic lhc')
+    plt.title("Classic Latin hypercube")
+    plt.grid()
+
+    plt.subplot(4, 1, 3)
+
+    plt.subplot(4, 1, 4)
+
+    plt.grid()
+    plt.show()
+
+
+# space = Space([(0., 1.)])
+# generate_randomness(space.dimensions, 10)
