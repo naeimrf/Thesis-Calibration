@@ -47,9 +47,9 @@ def run_morris_analysis(problem, x, y):
     horizontal_bar_plot(ax1, Si, {}, sortby='mu_star', unit=r'')
     covariance_plot(ax2, Si, {}, unit=r"")
 
-    # fig2 = plt.figure(figsize=(10, 4))
-    # fig2.canvas.set_window_title(f'Histograms of the input samples for different parameters!')
-    # sample_histograms(fig2, x, problem, {'color': 'dodgerblue'})
+    fig2 = plt.figure(figsize=(10, 4))
+    fig2.canvas.set_window_title(f'Histograms of the input samples for different parameters!')
+    sample_histograms(fig2, x, problem, {'color': 'dodgerblue'})
 
     print(f'\t+ Morris sensitivity analysis method is over!')
     plt.show()
@@ -93,8 +93,24 @@ run_rbd_fast_analysis(problem, x, y)
 print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
       f" {round(((time.time() - start_time) / 60), 2)}min!")
 
-
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+def manual_lhc(n):
+    # https://www.youtube.com/watch?v=r6rp-Qxc9xI
+    lower_band = np.arange(0, n)/n
+    upper_band = np.arange(1, n+1)/n
+    points = np.random.uniform(low=lower_band, high=upper_band, size=[2, n]).T
+    np.random.shuffle(points[:, 1])
+
+    plt.figure(figsize=[5, 5])
+    plt.xlim([0, 1])
+    plt.ylim([0, 1])
+    plt.scatter(points[:, 0], points[:, 1], c='r')
+
+    for i in np.arange(0, 1, 1/n):
+        plt.axvline(i, linestyle=':', color='gray')
+        plt.axhline(i, linestyle=':', color='gray')
+    plt.show()
+
 # TODO: A quick and small comparison of random generation methods
 from skopt.sampler import Sobol, Lhs
 from skopt.space import Space

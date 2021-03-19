@@ -44,7 +44,7 @@ def get_file_names(BuildNum, NbRuns, path, alternative):
         for file in all_files:
             if file.endswith('.pickle'):
                 for cn in BuildNum:
-                    if str(cn) in file:  # if file.find(cn):
+                    if str(cn)+'v' in file:  # if file.find(cn):
                         if cn in lst:
                             value = lst[cn]
                             value.append(file)
@@ -190,27 +190,12 @@ def find_closest_value(arr, val):
     return arr[idx]
 
 
-def plot_prior_distributions(params, ranges, discrete, **kwargs):
-    print(f'\t- The start of plot_prior_distributions method ...')
-    groups = len(params)
-    theoretical_freq = [[1 / discrete] * discrete] * groups
-    lhc = kwargs.get('LHC')  # Latin Hyper Cube Frequencies
-    b_nbr = kwargs.get('Case')  # Building number
-    message = kwargs.get('Message')
-
-    theoretical_xlabels = []
-    for pr in ranges:
-        if pr[0] < 0.01:
-            theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 3)))
-        else:
-            theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 2)))
-
-    # - - - - - - - - - - - - - - - - - - - -
-    # The block below fits random numbers from LHC to theoretical distribution range
-    lpc_xlabels = []
+def get_projected_freq(theoretical_xlabels, lpc_xlabels, groups):
+    """
+    This function fits random numbers from LHC to theoretical distribution range
+    and returns the frequencies of projected values from actual LHC values
+    """
     lpc_theoretical_projected = []
-    for param in params:
-        lpc_xlabels.append(lhc[b_nbr][param])
     for theo_v, lpc_v in zip(theoretical_xlabels, lpc_xlabels):
         tmp = []
         for i in range(len(lpc_v)):
@@ -226,8 +211,12 @@ def plot_prior_distributions(params, ranges, discrete, **kwargs):
         for i in range(len(t)):
             lpc_freq[j].append((nbr.get(t[i], 0)) / length)  # returns the frequency of a key if exists otherwise zero!
         j += 1
-    # - - - - - - - - - - - - - - - - - - - -
 
+    return lpc_freq
+
+
+def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message):
+    groups = len(params)
     x = np.arange(discrete)  # position of groups, using X to align the bars side by side
 
     width = 0.75
@@ -255,6 +244,43 @@ def plot_prior_distributions(params, ranges, discrete, **kwargs):
     # plt.show(block=False)
     # plt.pause(plot_time * 3)  # seconds
     # plt.close()
+
+
+def plot_prior_distributions(params, ranges, buildings, discrete, per_building=True, **kwargs):
+    """
+    This method plots the actual prior samplings over the theoretical distribution per building
+    """
+    print(f'\t- The start of plot_prior_distributions method ...')
+    groups = len(params)
+    theoretical_freq = [[1 / discrete] * discrete] * groups
+    lhc = kwargs.get('LHC')  # Latin Hyper Cube Frequencies
+
+    lpc_xlabels_all_buildings = [[] for _ in range(groups)]
+
+    for b_nbr in buildings:
+        theoretical_xlabels = []
+        for pr in ranges:
+            if pr[0] < 0.01:
+                theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 3)))
+            else:
+                theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 2)))
+
+        lpc_xlabels = []
+
+        for i, param in enumerate(params):
+            lpc_xlabels.append(lhc[b_nbr][param])
+            lpc_xlabels_all_buildings[i] += lhc[b_nbr][param]
+
+    if per_building:
+        for b_nbr in buildings:
+            message = f'Constant probabilistic parameters vs LHC in building {b_nbr}'
+            lpc_freq = get_projected_freq(theoretical_xlabels, lpc_xlabels, groups)
+            plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message)
+    else:
+        message = f'Constant probabilistic parameters for all buildings with LHC'
+        lpc_freq = get_projected_freq(theoretical_xlabels, lpc_xlabels_all_buildings, groups)
+        plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message)
+
     print(f'\t+ plot_prior_distributions method is over!')
 
 
@@ -336,7 +362,7 @@ def get_simulation_runs(buildings, simulations):
     return total_sim_result
 
 
-def compare_results(buildings, simulations, measurements, area, alpha, plots):
+def compare_results(buildings, simulations, measurements, area, alpha, per_building=False):
     # prepare simulation results to compare - - -
     total_sim_result = get_simulation_runs(buildings, simulations)
 
@@ -354,12 +380,9 @@ def compare_results(buildings, simulations, measurements, area, alpha, plots):
             err = abs((reference[nbr] / ep_area - value / ep_area) / (reference[nbr] / ep_area)) * 100
             errors[nbr].update({key: err})
 
-        if plots:
-            # comment the line below out in case of many buildings!
-            # passed_cases_one_building(errors, nbr, alpha)
-            pass
-    if plots:
-        passed_cases_all_buildings(errors, alpha)
+        if per_building:
+            passed_cases_one_building(errors, nbr, alpha)
+    passed_cases_all_buildings(errors, alpha)
 
     # KEEP acceptable buildings with respect to alpha!
     acceptable = {}
@@ -377,7 +400,7 @@ def get_correlation(x1, y1, **kws):
     ax.annotate("p={:.3f}".format(p), xy=(.1, .8), xycoords=ax.transAxes)
 
 
-def make_joint_distribution(buildings, acceptable, plots):
+def make_joint_distribution(buildings, acceptable):
     print(f'\t- The start of Joint distribution method ...')
     os.chdir(res_path)
     accepted_ranges = {'Buildings': []}
@@ -398,28 +421,27 @@ def make_joint_distribution(buildings, acceptable, plots):
 
     df = pd.DataFrame(accepted_ranges)
 
-    if plots:
-        # https://seaborn.pydata.org/tutorial/color_palettes.html
-        df_tmp = df.copy()
-        df_tmp.loc[:, 'Buildings'] = 'Explained'
-        g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
-        g.map_diag(sns.histplot, hue=None, color=".3")
-        # g.map_offdiag(sns.regplot)
-        g.map_upper(sns.regplot)
-        g.map_lower(sns.kdeplot, levels=5, color="k", shade=True)
-        fig = plt.gcf()
-        fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
-                                    f' validated combination of parameters')
-        g.fig.set_size_inches(10, 7)
-        g.map(get_correlation)
-        # g._legend.remove()
-        plt.show()
-        # plt.show(block=False)
-        # plt.pause(plot_time * 6)
-        # plt.close()
-    else:
-        print(f'{df}')
 
+    # https://seaborn.pydata.org/tutorial/color_palettes.html
+    df_tmp = df.copy()
+    df_tmp.loc[:, 'Buildings'] = 'Explained'
+    g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
+    g.map_diag(sns.histplot, hue=None, color=".3")
+    # g.map_offdiag(sns.regplot)
+    g.map_upper(sns.regplot)
+    g.map_lower(sns.kdeplot, levels=5, color="k", shade=True)
+    fig = plt.gcf()
+    fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
+                                f' validated combination of parameters')
+    g.fig.set_size_inches(10, 7)
+    g.map(get_correlation)
+    # g._legend.remove()
+    plt.show()
+    # plt.show(block=False)
+    # plt.pause(plot_time * 6)
+    # plt.close()
+
+    # print(f'{df}')
     print(f'\t+ Joint distribution method is over!')
     return df
 
@@ -460,7 +482,7 @@ def plot_joint_distributions(data_frame):
         os.remove(f'{key}.png')
 
 
-def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=5, beta=85, discrete=5, plots=True):
+def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=5, beta=85, discrete=5):
     """
     This function is based on Carlos Cerezo, et al's method published in 2017
     This method needs:
@@ -474,18 +496,15 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
     print(f'- The start of annual calibration method ...')
     # * ALGORITHM STEP1: PARAMETER DEFINITION * * * * * * * * * * /
     _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 0)
-
-    if plots:
-        for b in buildings:
-            message = f'Constant probabilistic parameters vs LHC in building {b}'
-            plot_prior_distributions(params, params_ranges, discrete, LHC=params_cat, Case=b, Message=message)
+    plot_prior_distributions(params, params_ranges, buildings, discrete, per_building=False, LHC=params_cat)
 
     # * ALGORITHM STEP2: PARAMETRIC SIMULATION * * * * * * * * * * /
     print(f"-> {nbr_sim} random simulations out of {discrete ** (len(params))} possible combinations!")
     sim_data, model_area = read_simulation_files()
 
     # * ALGORITHM STEP3: ERROR QUALIFICATION (α) * * * * * * * * * * /
-    total_sim_results, _, errors, acceptable = compare_results(buildings, sim_data, total_epc, model_area, alpha, plots)
+    total_sim_results, _, errors, acceptable = \
+        compare_results(buildings, sim_data, total_epc, model_area, alpha, per_building=False)
 
     # * ALGORITHM STEP4: TEST OF ASSUMPTIONS (β) * * * * * * * * * * /
     unexplained_buildings = []
@@ -506,11 +525,10 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
         return 1
 
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
-    joint_dist = make_joint_distribution(buildings, acceptable, plots)
+    joint_dist = make_joint_distribution(buildings, acceptable)
     plot_joint_distributions(joint_dist)
 
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
-
     # TODO: Send the result back to local_builder for simulations with θ'
 
     print(f'+ Calibration method is over!')
@@ -521,7 +539,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
 if __name__ == '__main__':
     # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
     calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-                               alpha=15, beta=90, discrete=5, plots=True)
+                               alpha=17, beta=80, discrete=5)
 
     print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
           f" {round(((time.time() - start_time) / 60), 2)}min!")
