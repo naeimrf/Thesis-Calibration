@@ -215,7 +215,7 @@ def get_projected_freq(theoretical_xlabels, lpc_xlabels, groups):
     return lpc_freq
 
 
-def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message):
+def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message, color):
     groups = len(params)
     x = np.arange(discrete)  # position of groups, using X to align the bars side by side
 
@@ -225,7 +225,7 @@ def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete,
     for n, ax in enumerate(axs):
         ax.bar(x, theoretical_freq[n], color='gray', alpha=0.7,
                width=width, align='center', edgecolor='white')
-        ax.bar(x, lpc_freq[n], color='blue', alpha=0.5,
+        ax.bar(x, lpc_freq[n], color=color, alpha=0.5,
                width=width, align='center', edgecolor='white')
 
         ax.set_title(params[n], fontsize=10)
@@ -275,13 +275,38 @@ def plot_prior_distributions(params, ranges, buildings, discrete, per_building=T
         for b_nbr in buildings:
             message = f'Constant probabilistic parameters vs LHC in building {b_nbr}'
             lpc_freq = get_projected_freq(theoretical_xlabels, lpc_xlabels, groups)
-            plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message)
+            plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message, color='blue')
     else:
         message = f'Constant probabilistic parameters for all buildings with LHC'
         lpc_freq = get_projected_freq(theoretical_xlabels, lpc_xlabels_all_buildings, groups)
-        plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message)
+        plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message, color='blue')
 
     print(f'\t+ plot_prior_distributions method is over!')
+
+
+def plot_calibrated_parameters(data_frame, ranges, discrete):
+    if 'Buildings' in data_frame.columns:
+        del data_frame['Buildings']
+
+    params = data_frame.columns.values.tolist()
+    groups = len(params)
+
+    theoretical_xlabels = []
+    for pr in ranges:
+        if pr[0] < 0.01:
+            theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 3)))
+        else:
+            theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 2)))
+
+    lpc_xlabels = []
+    for param in params:
+        tmp = data_frame[param].tolist()
+        lpc_xlabels.append(tmp)
+
+    theoretical_freq = [[1 / discrete] * discrete] * groups
+    message = f'Prior and posterior marginal distributions for calibrated parameters'
+    lpc_freq = get_projected_freq(theoretical_xlabels, lpc_xlabels, groups)
+    plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message, color='green')
 
 
 def passed_cases_one_building(error_dict, nbr, alpha):
@@ -400,7 +425,7 @@ def get_correlation(x1, y1, **kws):
     ax.annotate("p={:.3f}".format(p), xy=(.1, .8), xycoords=ax.transAxes)
 
 
-def make_joint_distribution(buildings, acceptable):
+def make_joint_distribution(buildings, acceptable, discrete):
     print(f'\t- The start of Joint distribution method ...')
     os.chdir(res_path)
     accepted_ranges = {'Buildings': []}
@@ -426,10 +451,10 @@ def make_joint_distribution(buildings, acceptable):
     df_tmp = df.copy()
     df_tmp.loc[:, 'Buildings'] = 'Explained'
     g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
-    g.map_diag(sns.histplot, hue=None, color=".3")
+    g.map_diag(sns.histplot, hue=None, color=".3", bins=discrete)
     # g.map_offdiag(sns.regplot)
     g.map_upper(sns.regplot)
-    g.map_lower(sns.kdeplot, levels=5, color="k", shade=True)
+    g.map_lower(sns.kdeplot, levels=discrete, color="k", shade=True)
     fig = plt.gcf()
     fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
                                 f' validated combination of parameters')
@@ -446,7 +471,7 @@ def make_joint_distribution(buildings, acceptable):
     return df
 
 
-def plot_joint_distributions(data_frame):
+def plot_joint_distributions(data_frame, discrete):
     del data_frame['Buildings']
 
     sns.set_theme(style="white")
@@ -461,7 +486,7 @@ def plot_joint_distributions(data_frame):
     for key in graph:
         graph[key] = sns.JointGrid(data=data_frame, x=header[0], y=header[i + 1], space=0)
         graph[key].plot_joint(sns.kdeplot, fill=True, clip=((lb.Bounds[0]), (lb.Bounds[i + 1])),
-                              thresh=0, levels=5, cmap=cmap).plot_joint(sns.scatterplot)
+                              thresh=0, levels=discrete, cmap=cmap).plot_joint(sns.scatterplot)
         graph[key].plot_marginals(sns.histplot, color="gray", alpha=1, bins=5)
         graph[key].savefig(f'{key}.png')
         plt.close(fig=None)
@@ -525,8 +550,9 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
         return 1
 
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
-    joint_dist = make_joint_distribution(buildings, acceptable)
-    plot_joint_distributions(joint_dist)
+    joint_dist = make_joint_distribution(buildings, acceptable, discrete)
+    # plot_joint_distributions(joint_dist, discrete)
+    plot_calibrated_parameters(joint_dist, lb.Bounds, discrete)
 
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
     # TODO: Send the result back to local_builder for simulations with θ'
@@ -539,7 +565,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
 if __name__ == '__main__':
     # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
     calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-                               alpha=17, beta=80, discrete=5)
+                               alpha=15, beta=60, discrete=5)
 
     print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
           f" {round(((time.time() - start_time) / 60), 2)}min!")
