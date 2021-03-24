@@ -66,10 +66,11 @@ def run_rbd_fast_analysis(problem, x, y):
     Si = rbd_fast.analyze(problem, x, y, print_to_console=True)
 
     labels = Si['names']
-    sizes = np.abs(Si['S1'])
+    sizes = np.array(Si['S1'])
+    sizes[sizes < 0] = 0.001  # replace negative sensitivity values with 0.001
     explode = np.zeros(len(labels))
     idx = np.where(sizes == np.max(sizes))
-    explode[idx] = 0.05
+    explode[idx] = 0.02
 
     fig1, ax1 = plt.subplots()
     ax1.pie(sizes, explode=explode, labels=labels, autopct='%1.1f%%',
@@ -84,17 +85,16 @@ def run_rbd_fast_analysis(problem, x, y):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # SENSITIVITY RUN * * * * * * * *
 print(f"* Sensitivity analysis started ...")
-"""
+
 _, _, _, _, _, _, params_build = read_epc_values(lb.VarName2Change, 0)
 sim_data, _ = read_simulation_files()
 total_sim_results = get_simulation_runs(lb.BuildNum, sim_data)
 problem, x, y = prepare_sensitivity_requirements(lb.VarName2Change, lb.Bounds, params_build, total_sim_results)
 run_morris_analysis(problem, x, y)
 run_rbd_fast_analysis(problem, x, y)
-"""
+
 print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
       f" {round(((time.time() - start_time) / 60), 2)}min!")
-
 
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 def manual_lhc(n):
@@ -217,10 +217,6 @@ def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
                          ha='center',
                          fontsize=8)
 
-    print(type(dimensions), dimensions[0].bounds[1])
-    print(sample_nbr)
-    print(f'salib:{salib}')
-
     nbrs = range(len(flat_data[0]))
     scope = ((dimensions[0].bounds[1] - dimensions[0].bounds[0])/sample_nbr)/2
     plt.errorbar(nbrs, flat_data[0], yerr=scope, ecolor='lightsteelblue', ls='none', capsize=4)
@@ -235,7 +231,7 @@ def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
     plt.show()
 
 
-space = Space([(19.5, float(24))])
-sample_nbr = 8
+space = Space([(0.15, float(0.35))])
+sample_nbr = 10
 centered, salib = generate_randomness(space.dimensions, sample_nbr)
 compare2_methods(centered, salib, space.dimensions, sample_nbr, 'Centered-LHC', 'SALib-LHC')
