@@ -85,14 +85,14 @@ def run_rbd_fast_analysis(problem, x, y):
 # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # SENSITIVITY RUN * * * * * * * *
 print(f"* Sensitivity analysis started ...")
-
+"""
 _, _, _, _, _, _, params_build = read_epc_values(lb.VarName2Change, 0)
 sim_data, _ = read_simulation_files()
 total_sim_results = get_simulation_runs(lb.BuildNum, sim_data)
 problem, x, y = prepare_sensitivity_requirements(lb.VarName2Change, lb.Bounds, params_build, total_sim_results)
 run_morris_analysis(problem, x, y)
 run_rbd_fast_analysis(problem, x, y)
-
+"""
 print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
       f" {round(((time.time() - start_time) / 60), 2)}min!")
 
@@ -232,6 +232,6 @@ def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
 
 
 space = Space([(0.15, float(0.35))])
-sample_nbr = 10
+sample_nbr = 7
 centered, salib = generate_randomness(space.dimensions, sample_nbr)
 compare2_methods(centered, salib, space.dimensions, sample_nbr, 'Centered-LHC', 'SALib-LHC')

@@ -37,7 +37,8 @@ def get_file_names(BuildNum, NbRuns, path, alternative):
     all_files = os.listdir(path)
     if NbRuns * len(BuildNum) != len(all_files) / 2:
         print(f"\n-> Something is WRONG, number of exiting files does not equal to 'BuildNum'!")
-        print(f'-> Result pickle files:{len(all_files) / 2} != Simulations asked:{NbRuns * len(BuildNum)}')
+        print(
+            f'-> Existing result pickle files:{len(all_files) / 2} != Simulations asked in builder.py:{NbRuns * len(BuildNum)}')
         raise ValueError("Missing simulation files!")
 
     lst = {}
@@ -249,7 +250,7 @@ def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete,
     # plt.close()
 
 
-def plot_prior_distributions(params, ranges, buildings, discrete, per_building=True, **kwargs):
+def plot_prior_distributions(params, ranges, buildings, discrete, per_building=True, SALib=True, **kwargs):
     """
     This method plots the actual prior samplings over the theoretical distribution per building
     """
@@ -276,18 +277,24 @@ def plot_prior_distributions(params, ranges, buildings, discrete, per_building=T
 
     if per_building:
         for b_nbr in buildings:
-            message = f'Constant probabilistic parameters vs LHC in building {b_nbr}'
+            if not SALib:
+                message = f'Constant probabilistic parameters vs SALib-LHC in building {b_nbr}'
+            else:
+                message = f'Constant probabilistic parameters vs Centered-LHC in building {b_nbr}'
             lhc_freq = get_projected_freq(theoretical_xlabels, lhc_xlabels, groups)
             plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='blue')
     else:
-        message = f'Constant probabilistic parameters for all buildings with LHC'
+        if not SALib:
+            message = f'Constant probabilistic parameters for all buildings with SALib-LHC'
+        else:
+            message = f'Constant probabilistic parameters for all buildings with Centered-LHC'
         lhc_freq = get_projected_freq(theoretical_xlabels, lhc_xlabels_all_buildings, groups)
         plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='blue')
 
     print(f'\t+ plot_prior_distributions method is over!')
 
 
-def plot_calibrated_parameters(data_frame, ranges, discrete):
+def plot_calibrated_parameters(data_frame, ranges, discrete, plot=True):
     if 'Buildings' in data_frame.columns:
         del data_frame['Buildings']
 
@@ -309,7 +316,8 @@ def plot_calibrated_parameters(data_frame, ranges, discrete):
     theoretical_freq = [[1 / discrete] * discrete] * groups
     message = f'Prior and posterior marginal distributions for calibrated parameters'
     lhc_freq = get_projected_freq(theoretical_xlabels, lhc_xlabels, groups)
-    plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='green')
+    if plot:
+        plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='green')
 
     return lhc_freq
 
@@ -392,7 +400,8 @@ def get_simulation_runs(buildings, simulations):
     return total_sim_result
 
 
-def compare_results(buildings, simulations, measurements, area, alpha, per_building=False):
+def compare_results(buildings, simulations, measurements,
+                    area, alpha, per_building=False, all_buildings=True):
     # prepare simulation results to compare - - -
     total_sim_result = get_simulation_runs(buildings, simulations)
 
@@ -412,7 +421,9 @@ def compare_results(buildings, simulations, measurements, area, alpha, per_build
 
         if per_building:
             passed_cases_one_building(errors, nbr, alpha)
-    passed_cases_all_buildings(errors, alpha)
+
+    if all_buildings:
+        passed_cases_all_buildings(errors, alpha)
 
     # KEEP acceptable buildings with respect to alpha!
     acceptable = {}
@@ -430,7 +441,7 @@ def get_correlation(x1, y1, **kws):
     ax.annotate("p={:.3f}".format(p), xy=(.1, .8), xycoords=ax.transAxes)
 
 
-def make_joint_distribution(buildings, acceptable, discrete):
+def make_joint_distribution(buildings, acceptable, discrete, plot=True):
     print(f'\t- The start of Joint distribution method ...')
     os.chdir(res_path)
     accepted_ranges = {'Buildings': []}
@@ -451,24 +462,25 @@ def make_joint_distribution(buildings, acceptable, discrete):
 
     df = pd.DataFrame(accepted_ranges)
 
-    # https://seaborn.pydata.org/tutorial/color_palettes.html
-    df_tmp = df.copy()
-    df_tmp.loc[:, 'Buildings'] = 'Explained'
-    g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
-    g.map_diag(sns.histplot, hue=None, color=".3", bins=discrete)
-    # g.map_offdiag(sns.regplot)
-    g.map_upper(sns.regplot)
-    g.map_lower(sns.kdeplot, levels=discrete, color="k", shade=True)
-    fig = plt.gcf()
-    fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
-                                f' validated combination of parameters')
-    g.fig.set_size_inches(10, 7)
-    g.map(get_correlation)
-    # g._legend.remove()
-    plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time * 6)
-    # plt.close()
+    if plot:
+        # https://seaborn.pydata.org/tutorial/color_palettes.html
+        df_tmp = df.copy()
+        df_tmp.loc[:, 'Buildings'] = 'Explained'
+        g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
+        g.map_diag(sns.histplot, hue=None, color=".3", bins=discrete)
+        # g.map_offdiag(sns.regplot)
+        g.map_upper(sns.regplot)
+        g.map_lower(sns.kdeplot, levels=discrete, color="k", shade=True)
+        fig = plt.gcf()
+        fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
+                                    f' validated combination of parameters')
+        g.fig.set_size_inches(10, 7)
+        g.map(get_correlation)
+        # g._legend.remove()
+        plt.show()
+        # plt.show(block=False)
+        # plt.pause(plot_time * 6)
+        # plt.close()
 
     # print(f'{df}')
     print(f'\t+ Joint distribution method is over!')
@@ -511,43 +523,9 @@ def plot_joint_distributions(data_frame, discrete):
         os.remove(f'{key}.png')
 
 
-def all_combinations(bounds, nbr, var_names):
-    """
-    This function takes probabilistic variable bounds, number of discritization and variable names
-    and returns a list of lists for all combinations.
-    """
-    #  converting list of lists to list of tuples suitable for Space function in skopt!
-    tmp = []
-    for bound in bounds:
-        tmp.append([float(b) for b in bound])
-    bounds = list(map(tuple, tmp))
-    space = Space(bounds)
-
-    # LHC with centered option to get the middle points
-    nbr_samples = nbr
-    lhs = Lhs(lhs_type="centered", criterion=None)
-    centered = lhs.generate(space.dimensions, nbr_samples)
-
-    # centered is a list of lists where each list has one value for each probabilistic variable
-    # convert to dataframe to split columns into separated variables
-    df = pd.DataFrame(centered, columns=var_names)
-    inverted_list = []
-    params = df.columns.values.tolist()
-    for param in params:
-        inverted_list.append(df[param].tolist())
-
-    # producing all combinations by product from itertools
-    # the result of product function is a list of tuples
-    combinations = list(product(*inverted_list))
-    tmp = []
-    for comb in combinations:
-        tmp.append(list(comb))
-    combinations = tmp
-
-    return combinations, inverted_list
-
-
-def plot_combinations(var_names, combs, points, sample_nbr):
+def plot_combinations(var_names, bounds, combs, points, sample_nbr):
+    info = dict(zip(var_names, bounds))
+    var_nbr = len(var_names)
     tmp = []
     for var in var_names:
         for i in range(sample_nbr):
@@ -562,21 +540,29 @@ def plot_combinations(var_names, combs, points, sample_nbr):
     keys = list(freq.keys())
     keys = [round(elem, 2) for elem in keys]
     vals = list(freq.values())
-    table = {'Variables': var_names, 'Range': keys, 'Frequency': vals}
+    table = {'Variables': var_names, 'Range of middle points': keys, 'Frequency': vals}
     table = pd.DataFrame.from_dict(table)
-    print(table)
-    plt.figure(figsize=(7, 4))
-    g = sns.barplot(x='Range', y='Frequency', data=table, hue='Variables', dodge=False)
+
+    plt.figure(figsize=(8, 4))
+    g = sns.barplot(x='Range of middle points', y='Frequency', data=table, hue='Variables', dodge=False)
     g.set_xticklabels(g.get_xticklabels(), rotation=90)
 
     fig = plt.gcf()
-    fig.canvas.set_window_title("Frequency of samples with skopt-Centered-LHC ")
+    fig.canvas.set_window_title("Frequency of real samples with skopt-Centered-LHC ")
+
+    to_print = ''
+    for i in range(var_nbr - 1):
+        to_print += str(sample_nbr) + 'x'
+    to_print += str(sample_nbr)
+    plt.title(f'{var_nbr} variables & {sample_nbr} samples: {to_print} '
+              f'= {sample_nbr ** var_nbr} combinations!\n{info}', fontsize=9)
     plt.legend(bbox_to_anchor=(1.02, 1), loc=2)
     plt.tight_layout()
     plt.show()
 
 
-def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=5, beta=85, discrete=5):
+def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
+                               alpha=5, beta=85, discrete=5, plot=True):
     """
     This function is based on Carlos Cerezo, et al's method published in 2017
     This method needs:
@@ -588,9 +574,13 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
     """
 
     print(f'- The start of annual calibration method ...')
+    if not plot:
+        print("** THE PLOT OPTION IS OFF, CHANGE TO 'TRUE' TO SEE THE RESULTS! **")
     # * ALGORITHM STEP1: PARAMETER DEFINITION * * * * * * * * * * /
     _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 0)
-    plot_prior_distributions(params, params_ranges, buildings, discrete, per_building=False, LHC=params_cat)
+    if plot:
+        plot_prior_distributions(params, params_ranges, buildings, discrete,
+                                 per_building=False, SALib=lb.SAMPLE_TYPE, LHC=params_cat)
 
     # * ALGORITHM STEP2: PARAMETRIC SIMULATION * * * * * * * * * * /
     print(f"-> {nbr_sim} random simulations out of {discrete ** (len(params))} possible combinations!")
@@ -598,7 +588,8 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
 
     # * ALGORITHM STEP3: ERROR QUALIFICATION (α) * * * * * * * * * * /
     total_sim_results, _, errors, acceptable = \
-        compare_results(buildings, sim_data, total_epc, model_area, alpha, per_building=False)
+        compare_results(buildings, sim_data, total_epc,
+                        model_area, alpha, per_building=False, all_buildings=False)
 
     # * ALGORITHM STEP4: TEST OF ASSUMPTIONS (β) * * * * * * * * * * /
     unexplained_buildings = []
@@ -619,30 +610,43 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings, alpha=
         return 1
 
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
-    joint_dist = make_joint_distribution(buildings, acceptable, discrete)
-    # plot_joint_distributions(joint_dist, discrete)
-    calib_frequencies = plot_calibrated_parameters(joint_dist, lb.Bounds, discrete)
-    for calib in calib_frequencies: # TODO
-        print(f'calib_frequencies:\n{calib}')
+    calib_params = make_joint_distribution(buildings, acceptable, discrete, plot)
+
+    # Plot below provides more insight to possible correlations of parameters /
+    if plot:
+        plot_joint_distributions(calib_params, discrete)
+
+    calib_frequencies = plot_calibrated_parameters(calib_params, lb.Bounds, discrete, plot)
 
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
-    # TODO: Send the result back to local_builder for simulations with θ'
+    # Send the result back to local_builder for simulations with θ'
+    make_final_distribution(calib_params, calib_frequencies)
 
     print(f'+ Calibration method is over!')
     return 0
+
+# TODO: MAKE ARBITRARY DISTRIBUTION WORK WITH SALib
+from scipy import stats
+def make_final_distribution(calib_params, calib_frequencies):
+    # https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.rv_discrete.html
+    # https://stackoverflow.com/questions/45280278/could-salib-support-other-probability-distribution-when-inputing-parameters-in-s/51763834
+    for i in range(len(calib_params.columns)):
+        print(set(calib_params[calib_params.columns[i]]))
+    pass
 
 
 # CALIBRATION RUN * * * * * * * *
 if __name__ == '__main__':
     # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
+    calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
+                               alpha=20, beta=90, discrete=lb.sample_nbr, plot=True)
 
-    discrete_nbr = 5
-    # calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-    #                           alpha=10, beta=90, discrete_nbr=5)
-
-    # TODO: TEST!
-    combinations, middle_points = all_combinations(lb.Bounds, discrete_nbr, lb.VarName2Change)
-    plot_combinations(lb.VarName2Change, combinations, middle_points, discrete_nbr)
+    # Prior presentation of real samples for selected parameters
+    if lb.SAMPLE_TYPE:
+        combinations, middle_points = lb.all_combinations(lb.Bounds, lb.VarName2Change, lb.sample_nbr)
+        plot_combinations(lb.VarName2Change, lb.Bounds, combinations, middle_points, lb.sample_nbr)
 
     print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
           f" {round(((time.time() - start_time) / 60), 2)}min!")
+
+
