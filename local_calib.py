@@ -4,7 +4,7 @@ import numpy as np, seaborn as sns, pandas as pd
 import matplotlib.pyplot as plt
 from collections import Counter
 from scipy import stats, linalg
-import math, random
+import math, random, statistics
 from SALib.sample import latin
 
 start_time = time.time()
@@ -832,6 +832,31 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
     return salib_samples
 
 
+def plot_metered_vs_simulated_energies(metered, simulated):
+    metered_mean = statistics.mean(metered)
+    simulated_mean = statistics.mean(simulated)
+
+    # From scipy documentation: if the K-S statistic is small or the p-value is high, then we cannot reject
+    # the hypothesis that the distributions of the two samples are the same.
+    # If p-value is lower than a=0.05 or 0.01, then it is very probable that the two distributions are different.
+    ks_test = stats.ks_2samp(metered, simulated)
+
+    plt.hist(metered, bins=20, label='Metered', alpha=0.5, color='red', histtype='step')
+    plt.hist(simulated, bins=20, label='Simulated', alpha=0.8, color='gray', histtype='barstacked')
+    plt.axvline(x=metered_mean, ls='--', alpha=0.5, color='red', label='Metered mean')
+    plt.axvline(x=simulated_mean, ls='-', alpha=0.5, color='black', label='Simulated mean')
+    plt.title(
+        f'Metered mean:{round(metered_mean, 2)} vs Simulated_mean:{round(simulated_mean, 2)}\nKS-p_value:{round(ks_test[1], 2)}',
+        color="k")
+    plt.xlabel('EUI(kWh/m2)')
+    plt.ylabel('Frequency')
+    plt.legend(loc='best')  # bbox_to_anchor=(1.04, 1)
+    # plt.xticks(np.arange(min(simulated), max(simulated)+1, 5.0))
+
+    plt.tight_layout()
+    plt.show()
+
+
 def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
                                alpha=5, beta=85, discrete=5, all_plots=True):
     """
@@ -910,7 +935,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
 if __name__ == '__main__':
     # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
     calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-                               alpha=7, beta=90, discrete=lb.sample_nbr, all_plots=True)
+                               alpha=5, beta=90, discrete=lb.sample_nbr, all_plots=True)
 
     # Prior presentation of real samples for selected parameters
     if lb.SAMPLE_TYPE:
