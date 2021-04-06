@@ -95,7 +95,9 @@ from skopt.space import Space
 from skopt.sampler import Lhs
 import pandas as pd
 from itertools import product
+from pathlib import Path
 import numpy as np
+import csv
 def all_combinations(bounds, var_names, samples):
     """
     This function takes probabilistic variable bounds, number of discritization and variable names
@@ -131,6 +133,20 @@ def all_combinations(bounds, var_names, samples):
     return combinations, inverted_list
 
 
+def read_calibrated_params(path, folder):
+    # 'Sim_Results' is added with respect to LaunchSim.py line 27
+    path = str(Path(path).parent)
+    csv_place = path + "/" + folder + "/Sim_Results"
+    print(csv_place)
+    if os.path.isfile(csv_place + "/theta_prime.csv"):
+        with open(csv_place + "/theta_prime.csv", 'r') as csv_file:
+            params = list(csv.reader(csv_file))
+            params = np.array(params).astype("float")
+        return params
+    else:
+        print(f'There is no calibrated paramter file at:{csv_place}')
+        print(f'Run local_calib.py and come back!')
+        raise ValueError("Missing Calibrated CSV file!")
 #####################################################
 
 
@@ -156,7 +172,7 @@ def LaunchProcess(bldidx, keyPath, nbcase, VarName2Change=[], Bounds=[], nbruns=
                 os.remove(os.path.join(SimDir, i))
     os.chdir(SimDir)
 
-    # Sampling process if someis define int eh function's arguments
+    # Sampling process if you define int as function's arguments
     # It is currently using the latin hyper cube methods for the sampling generation (latin.sample)
     Param = [1]
     if len(VarName2Change) > 0:
@@ -165,13 +181,19 @@ def LaunchProcess(bldidx, keyPath, nbcase, VarName2Change=[], Bounds=[], nbruns=
         problem['bounds'] = Bounds
         problem['num_vars'] = len(VarName2Change)
         # problem = read_param_file(MainPath+'\\liste_param.txt')
-        if SAMPLE_TYPE:
-            Param, _ = all_combinations(Bounds, VarName2Change, sample_nbr)
-            Param = np.array([np.array(x) for x in Param])
-            print(f'Selected sample method -> sikit optimization LHC-Centered')
+
+        if RUN_WITH_CALIBRATED_PARAMETERS:
+            Param = read_calibrated_params(os.getcwd(), CaseName)
+            print(f'Simulations with calibrated parameters ...')
+
         else:
-            Param = latin.sample(problem, nbruns)
-            print(f'Selected sample method -> SALib')
+            if SAMPLE_TYPE:
+                Param, _ = all_combinations(Bounds, VarName2Change, sample_nbr)
+                Param = np.array([np.array(x) for x in Param])
+                print(f'Selected sample method -> sikit optimization LHC-Centered')
+            else:
+                Param = latin.sample(problem, nbruns)
+                print(f'Selected sample method -> SALib')
 
     Res = {}
     # this will be the final list of studied cases : list of objects stored in a dict . idf key for idf object and building key for building database object
@@ -256,16 +278,17 @@ def LaunchProcess(bldidx, keyPath, nbcase, VarName2Change=[], Bounds=[], nbruns=
     return MainPath, epluspath, Param
 
 
+RUN_WITH_CALIBRATED_PARAMETERS = True
 CaseName = 'ForTest'  # a folder_name to save input and outfile in form of pickles!
-BuildNum = [10]
+BuildNum = [9] # building number(name) to be simulated
 # check parameters names under DB_Building!
 VarName2Change = ['EnvLeak', 'setTempLoL', 'wwr', 'BasementAirLeak']
 Bounds = [[0.4, 2], [20, 23], [0.15, 0.35], [0.05, 2]]
-NbRuns = 81
+NbRuns = 10
 
 # SALib or SKOPT LHC-Centered
 SAMPLE_TYPE = False  # False -> SALib, True -> SKOPT LHC-Centered
-sample_nbr = 3  # number of middle point samples in each parameter range!
+sample_nbr = 5  # number of middle point samples in each parameter range!
 if SAMPLE_TYPE:
     NbRuns = sample_nbr ** len(VarName2Change)
 

@@ -2,10 +2,11 @@ import os, time, pickle, copy
 import local_builder as lb
 import numpy as np, seaborn as sns, pandas as pd
 import matplotlib.pyplot as plt
+import math, random, statistics
 from collections import Counter
 from scipy import stats, linalg
-import math, random, statistics
 from SALib.sample import latin
+from pathlib import Path
 
 start_time = time.time()
 test_path = os.path.join(os.getcwd(), lb.CaseName)
@@ -32,12 +33,15 @@ def get_file_names(BuildNum, NbRuns, path, alternative):
     alternative to 1 -> based on existing simulation file names
     This function also checks the existing number of files against the number of simulations asked by user!
     """
+    if os.path.isfile(path + "/theta_prime.csv"):
+        os.remove(path + "/theta_prime.csv")
+        print("\t-> Previous calibrated parameter file 'theta_prime.csv' is removed.")
+
     # check the number of simulations in the result folder and produce their names
     all_files = os.listdir(path)
     if NbRuns * len(BuildNum) != len(all_files) / 2:
-        print(f"\n-> Something is WRONG, number of exiting files does not equal to 'BuildNum'!")
-        print(
-            f'-> Existing result pickle files:{len(all_files) / 2} != Simulations asked in builder.py:{NbRuns * len(BuildNum)}')
+        print(f"\t-> Something is WRONG, number of exiting files does not equal to 'BuildNum'!")
+        print(f'\t-> Existing result pickle files:{len(all_files) / 2} != Simulations asked in builder.py:{NbRuns * len(BuildNum)}')
         raise ValueError("Missing simulation files!")
 
     lst = {}
@@ -399,8 +403,8 @@ def get_simulation_runs(buildings, simulations):
     return total_sim_result
 
 
-def compare_results(buildings, simulations, measurements,
-                    area, alpha, per_building=False, all_buildings=True, plots=True):
+def compare_results(buildings, simulations, measurements, area,
+                    alpha=5, per_building=False, all_buildings=True, plots=True):
     # prepare simulation results to compare - - -
     total_sim_result = get_simulation_runs(buildings, simulations)
 
@@ -658,6 +662,12 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
             "Pairwise plots of generated samples from covariance matrix of calibrated parameters")
         plt.show()
 
+    tmp = np.array(y_transformed[0]).reshape((-1, 1))  # TRANSPOSE TO COLUMN FORMAT
+    for i in range(len(y_transformed)-1):
+        col_tmp = (y_transformed[i+1]).reshape(-1, 1)
+        tmp = np.concatenate((tmp, col_tmp), axis=1)
+
+    y_transformed = tmp
     print(f'\t+ Generating calibrated samples from correlated parameters is done in {round(time.time()-mrfc_time, 2)}s.')
     return y_transformed
 
@@ -684,6 +694,8 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
     """
     read_time3 = time.time()
     print(f'\t- Finding the best distributions started ...')
+    distributions = ['foldcauchy', 'cauchy', 'alpha', 'dweibull', 'genextreme', 'pearson3', 'dgamma']
+    """
     distributions = ['alpha', 'anglit', 'arcsine', 'beta', 'betaprime', 'bradford', 'burr', 'cauchy', 'chi', 'chi2',
                      'cosine', 'dgamma', 'dweibull', 'erlang', 'expon', 'exponweib', 'exponpow', 'f', 'fatiguelife',
                      'fisk', 'foldcauchy', 'foldnorm', 'genlogistic', 'genpareto', 'genexpon', 'gumbel_r',
@@ -694,7 +706,7 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
                      'pareto', 'pearson3', 'powerlaw', 'powerlognorm', 'powernorm', 'rdist', 'reciprocal', 'rayleigh',
                      'rice', 'recipinvgauss', 'semicircular', 't', 'triang', 'truncexpon', 'truncnorm', 'tukeylambda',
                      'uniform', 'vonmises', 'wald', 'weibull_min', 'weibull_max', 'wrapcauchy']
-
+    """
     param_names = list(calib_params.columns.values)
     # Danoe's formula to find optimum number of bins
     if Danoe:
@@ -797,7 +809,7 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
         'names': param_names,
         'bounds': [[0, 1]] * len(param_names)
     }
-    salib_samples = latin.sample(problem, int(nbr_samples * 2))  # double size samples to trim later1
+    salib_samples = latin.sample(problem, int(nbr_samples * 2))  # double size samples to trim later
     for i, dist in zip(range(len(param_names)), distro_names):
         distro = getattr(stats, dist)
 
@@ -843,7 +855,7 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
     return salib_samples
 
 
-def plot_metered_vs_simulated_energies(metered, simulated):
+def plot_metered_vs_simulated_energies(metered, simulated, bins=20):
     metered_mean = statistics.mean(metered)
     simulated_mean = statistics.mean(simulated)
 
@@ -852,13 +864,14 @@ def plot_metered_vs_simulated_energies(metered, simulated):
     # If p-value is lower than a=0.05 or 0.01, then it is very probable that the two distributions are different.
     ks_test = stats.ks_2samp(metered, simulated)
 
-    plt.hist(metered, bins=20, label='Metered', alpha=0.5, color='red', histtype='step')
-    plt.hist(simulated, bins=20, label='Simulated', alpha=0.8, color='gray', histtype='barstacked')
+    plt.figure(figsize=(6, 4))
+    plt.hist(metered, bins=bins, label='Metered', alpha=0.5, color='red', histtype='step')
+    plt.hist(simulated, bins=bins, label='Simulated', alpha=0.8, color='gray', histtype='barstacked')
     plt.axvline(x=metered_mean, ls='--', alpha=0.5, color='red', label='Metered mean')
     plt.axvline(x=simulated_mean, ls='-', alpha=0.5, color='black', label='Simulated mean')
     plt.title(
         f'Metered mean:{round(metered_mean, 2)} vs Simulated_mean:{round(simulated_mean, 2)}\nKS-p_value:{round(ks_test[1], 2)}',
-        color="k")
+        color="k", fontsize=9)
     plt.xlabel('EUI(kWh/m2)')
     plt.ylabel('Frequency')
     plt.legend(loc='best')  # bbox_to_anchor=(1.04, 1)
@@ -868,16 +881,21 @@ def plot_metered_vs_simulated_energies(metered, simulated):
     plt.show()
 
 
-def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
-                               alpha=5, beta=85, discrete=5, all_plots=True):
+def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings, final_samples=100,
+                               alpha=5, beta=85, discrete=5, all_plots=True, approach=1):
     """
     This function is based on Carlos Cerezo, et al's method published in 2017
     This method needs:
     'params' -> uncertain parameter names
     'params_ranges' -> uncertain parameter ranges
+    'nbr_sim' ->  the number simulated files in local_builder.py
+    'buildings' -> list of building names simulated in local_builder
     'alpha' value -> the upper acceptable limit for simulation and measurement difference for each building
     'beta' value -> minimum percentage of acceptable simulations which satisfies 'alpha' condition
     'discrete' -> as the number of division for continuous parameter ranges
+    'approach' -> to create random samples from calibrated parameters, 1 for covariance matrix and 2
+    for best theoretical distribution fit and LHC sampling of that distribution.
+    'final_samples' -> number of random samples from joint distribution
     """
 
     print(f'- The start of annual calibration method ...')
@@ -890,12 +908,12 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
                                  per_building=False, SALib=lb.SAMPLE_TYPE, LHC=params_cat)
 
     # * ALGORITHM STEP2: PARAMETRIC SIMULATION * * * * * * * * * * /
-    print(f"\t-> {nbr_sim} random simulations out of {discrete ** (len(params))} possible combinations!")
+    print(f"\t-> {nbr_sim_uncalib} random simulations out of {discrete ** (len(params))} possible combinations!")
     sim_data, model_area = read_simulation_files()
 
     # * ALGORITHM STEP3: ERROR QUALIFICATION (α) * * * * * * * * * * /
     total_sim_results, _, errors, acceptable = \
-        compare_results(buildings, sim_data, total_epc, model_area, alpha,
+        compare_results(buildings, sim_data, total_epc, model_area, alpha=alpha,
                         per_building=False, all_buildings=True, plots=all_plots)
 
     # * ALGORITHM STEP4: TEST OF ASSUMPTIONS (β) * * * * * * * * * * /
@@ -927,16 +945,17 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
 
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
     # Save and send the result back to local_builder for simulations with θ'
-    final_samples = 100  # The number of final samples based on calibrated parameters
-    # APPROACH 1
-    theta_prime = make_random_from_correlated(calib_params, lb.VarName2Change, final_samples,
-                                               cholesky=True, plots=all_plots)
-    # np.savetxt("theta_prime.csv", theta_prime, delimiter=",") # FIXME UNCOMMENT FOR WRITE!
+    smpl = final_samples  # The number of final samples based on calibrated parameters
 
-    # APPROACH 2
-    best_distros = fit_best_distro(calib_params, lb.sample_nbr, 3, Danoe=False, plot=all_plots)
-    theta_prime = make_random_from_continuous(best_distros, lb.Bounds, final_samples, plot=all_plots)
-    # np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
+    if approach == 1:
+        theta_prime = make_random_from_correlated(calib_params, lb.VarName2Change, smpl,
+                                                   cholesky=True, plots=all_plots)
+        np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
+
+    elif approach == 2:
+        best_distros = fit_best_distro(calib_params, lb.sample_nbr, 3, Danoe=False, plot=all_plots)
+        theta_prime = make_random_from_continuous(best_distros, lb.Bounds, smpl, plot=all_plots)
+        np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
 
     print(f'+ Calibration method is over!')
     return 0
@@ -944,14 +963,31 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
 
 # CALIBRATION RUN * * * * * * * *
 if __name__ == '__main__':
-    # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
-    calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-                               alpha=10, beta=90, discrete=lb.sample_nbr, all_plots=True)
+    if lb.RUN_WITH_CALIBRATED_PARAMETERS:
+        print(f'*Simulation results for buildings: {lb.BuildNum} with calibrated parameters*')
+        _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 0)
+        sim_data, model_area = read_simulation_files()
+        total_sim_results, _, errors, acceptable = \
+            compare_results(lb.BuildNum, sim_data, total_epc, model_area, alpha=7,
+                            per_building=False, all_buildings=True, plots=True)
 
-    # Prior presentation of real samples for selected parameters
-    if lb.SAMPLE_TYPE:
-        combinations, middle_points = lb.all_combinations(lb.Bounds, lb.VarName2Change, lb.sample_nbr)
-        plot_combinations(lb.VarName2Change, lb.Bounds, combinations, middle_points, lb.sample_nbr)
+        # TODO: BELOW ARE DUMMY VALUES, FIX IT!
+        n = 1000
+        u1 = 5
+        u2 = 5
+        series1 = u1 + np.random.randn(n)
+        series2 = u2 + np.random.randn(n)
+        plot_metered_vs_simulated_energies(series1, series2, bins=20)
+        print(f'** Illustration of results by calibrated parameters is over.*')
+    else:
+        # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
+        calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum, alpha=7,
+                    beta=90, final_samples=10, discrete=lb.sample_nbr, all_plots=True, approach=1)
 
-    print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
-          f" {round(((time.time() - start_time) / 60), 2)}min!")
+        # Prior presentation of real samples for selected parameters
+        if lb.SAMPLE_TYPE:
+            combinations, middle_points = lb.all_combinations(lb.Bounds, lb.VarName2Change, lb.sample_nbr)
+            plot_combinations(lb.VarName2Change, lb.Bounds, combinations, middle_points, lb.sample_nbr)
+
+        print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
+              f" {round(((time.time() - start_time) / 60), 2)}min!")
