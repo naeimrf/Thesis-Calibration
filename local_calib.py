@@ -589,7 +589,8 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
     matrix. C can be created, for example, by using the Cholesky decomposition of R, or from the
     eigenvalues and eigenvectors of R."
     """
-
+    print(f'\t- The start of generating calibrated samples from correlated parameters ...')
+    mrfc_time = time.time()
     if isinstance(data, np.ndarray):
         values = data
         covariance_matrix = np.cov(values, rowvar=True)  # The desired covariance matrix
@@ -656,6 +657,8 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
         fig.canvas.set_window_title(
             "Pairwise plots of generated samples from covariance matrix of calibrated parameters")
         plt.show()
+
+    print(f'\t+ Generating calibrated samples from correlated parameters is done in {round(time.time()-mrfc_time, 2)}s.')
     return y_transformed
 
 
@@ -679,9 +682,8 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
     This code is inspired by Sebastian Jose's answer in stackoverflow
     # https://stackoverflow.com/questions/6620471/fitting-empirical-distribution-to-theoretical-ones-with-scipy-python
     """
-
     read_time3 = time.time()
-    print(f'\t- Finding best distributions started ...')
+    print(f'\t- Finding the best distributions started ...')
     distributions = ['alpha', 'anglit', 'arcsine', 'beta', 'betaprime', 'bradford', 'burr', 'cauchy', 'chi', 'chi2',
                      'cosine', 'dgamma', 'dweibull', 'erlang', 'expon', 'exponweib', 'exponpow', 'f', 'fatiguelife',
                      'fisk', 'foldcauchy', 'foldnorm', 'genlogistic', 'genpareto', 'genexpon', 'gumbel_r',
@@ -741,7 +743,7 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
         results[name] = {k: results[name][k] for k in sorted(results[name], key=results[name].get)}
         first_key = next(iter(results[name]))
         best_match[name].update({first_key: next(iter(results[name].values()))})
-    print(f'\t+ Finding best distributions is done in {round((time.time() - read_time3), 2)}s!')
+    print(f'\t+ Finding the best distributions is done in {round((time.time() - read_time3), 2)}s!')
 
     if plot:
         for key in results.keys():
@@ -769,7 +771,7 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
                 # FIXME: A QUICK SOLUTION TO AVOID ERROR JUMP IN y_plot!
                 if second_largest(y_plot) * 10 < max(y_plot):
                     index_max = max(range(len(y_plot)), key=y_plot.__getitem__)
-                    y_plot[index_max] = second_largest(y_plot)
+                    y_plot[index_max] = second_largest(y_plot) * 2
 
                 plt.plot(x_plot, y_plot, label=distro + ": " + str(sse)[0:6],
                          color=(random.uniform(0, 1), random.uniform(0, 1), random.uniform(0, 1)))
@@ -783,6 +785,8 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
 
 
 def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
+    print(f'\t- The start of generating calibrated samples from the best distribution ...')
+    mrfc_tme = time.time()
     param_names = list(distro_dict.keys())
     distro_names = []
     for param in param_names:
@@ -793,7 +797,7 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
         'names': param_names,
         'bounds': [[0, 1]] * len(param_names)
     }
-    salib_samples = latin.sample(problem, nbr_samples)
+    salib_samples = latin.sample(problem, int(nbr_samples * 2))  # double size samples to trim later1
     for i, dist in zip(range(len(param_names)), distro_names):
         distro = getattr(stats, dist)
 
@@ -802,15 +806,21 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
         loc = distro_values[2]
         scale = distro_values[3]
 
-        # https://stackoverflow.com/questions/45280278/could-salib-support-other-probability-distribution-when-inputing-parameters-in-s
         salib_samples[:, i] = distro.ppf(salib_samples[:, i], loc=loc, scale=scale, *arg)
 
-    # To catch out of bound values from some distributions
-    df = pd.DataFrame(salib_samples, columns=param_names)
-    for i, param_name in enumerate(param_names):
-        df[param_name] = pd.np.where(df[param_name] < bounds[i][0], bounds[i][0], df[param_name])
-        df[param_name] = pd.np.where(df[param_name] > bounds[i][1], bounds[i][1], df[param_name])
+    # FIXME: A QUICK SOLUTION TO AVOID OUT OF BOUNDS IN SALib_SAMPLES, TRIM 100 SAMPLES!
+    tmp = []
+    for i, bound in enumerate(bounds):
+        tmp.append((salib_samples[:, i])[np.logical_not(np.logical_or(
+            salib_samples[:, i] > bound[1], salib_samples[:, i] < bound[0]))])
 
+    salib_samples = np.array((tmp[0][:nbr_samples])).reshape((-1, 1))  # TRANSPOSE TO COLUMN FORMAT
+    for i in range(len(tmp)-1):
+        col_tmp = (tmp[i+1][:nbr_samples]).reshape(-1, 1)
+        salib_samples = np.concatenate((salib_samples, col_tmp), axis=1)
+
+    print(f'\t+ Generating calibrated samples from best distribution is done in {round(time.time() - mrfc_tme, 2)}s.')
+    df = pd.DataFrame(salib_samples, columns=param_names)
     if plot:
         sns.color_palette("rocket", as_cmap=True)
         g = sns.PairGrid(df, palette="Paired")
@@ -827,7 +837,8 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
         plt.show()
 
     else:
-        print(df)
+        for param_name in param_names:
+            print(f'{param_name} -> min:{np.min(df[param_name])}, max:{np.max(df[param_name])}')
 
     return salib_samples
 
@@ -879,7 +890,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
                                  per_building=False, SALib=lb.SAMPLE_TYPE, LHC=params_cat)
 
     # * ALGORITHM STEP2: PARAMETRIC SIMULATION * * * * * * * * * * /
-    print(f"-> {nbr_sim} random simulations out of {discrete ** (len(params))} possible combinations!")
+    print(f"\t-> {nbr_sim} random simulations out of {discrete ** (len(params))} possible combinations!")
     sim_data, model_area = read_simulation_files()
 
     # * ALGORITHM STEP3: ERROR QUALIFICATION (α) * * * * * * * * * * /
@@ -898,7 +909,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
 
     percentage = (ratio / len(buildings)) * 100
     if percentage > beta:
-        print(f"-> β qualification satisfied with {percentage}%.")
+        print(f"\t-> β qualification satisfied with {percentage}%.")
     else:
         print(f"-> ATTENTION: only {percentage}% simulations of buildings matched measurements!\n"
               f"-> Model revision, choice of θ parameters or more number of simulations is needed!\n"
@@ -923,7 +934,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
     # np.savetxt("theta_prime.csv", theta_prime, delimiter=",") # FIXME UNCOMMENT FOR WRITE!
 
     # APPROACH 2
-    best_distros = fit_best_distro(calib_params, lb.sample_nbr, 3, Danoe=True, plot=all_plots)
+    best_distros = fit_best_distro(calib_params, lb.sample_nbr, 3, Danoe=False, plot=all_plots)
     theta_prime = make_random_from_continuous(best_distros, lb.Bounds, final_samples, plot=all_plots)
     # np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
 
@@ -935,7 +946,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim, buildings,
 if __name__ == '__main__':
     # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
     calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum,
-                               alpha=5, beta=90, discrete=lb.sample_nbr, all_plots=True)
+                               alpha=10, beta=90, discrete=lb.sample_nbr, all_plots=True)
 
     # Prior presentation of real samples for selected parameters
     if lb.SAMPLE_TYPE:
