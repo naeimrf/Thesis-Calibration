@@ -98,6 +98,8 @@ from itertools import product
 from pathlib import Path
 import numpy as np
 import csv
+
+
 def all_combinations(bounds, var_names, samples):
     """
     This function takes probabilistic variable bounds, number of discritization and variable names
@@ -137,16 +139,18 @@ def read_calibrated_params(path, folder):
     # 'Sim_Results' is added with respect to LaunchSim.py line 27
     path = str(Path(path).parent)
     csv_place = path + "/" + folder + "/Sim_Results"
-    print(csv_place)
+    print(f'CSV location:{csv_place}')
     if os.path.isfile(csv_place + "/theta_prime.csv"):
         with open(csv_place + "/theta_prime.csv", 'r') as csv_file:
             params = list(csv.reader(csv_file))
             params = np.array(params).astype("float")
         return params
     else:
-        print(f'There is no calibrated paramter file at:{csv_place}')
-        print(f'Run local_calib.py and come back!')
+        print(f'There is no calibrated parameter file at:{csv_place}')
+        print(f'Run local_calib.py first to calibrate parameters!')
         raise ValueError("Missing Calibrated CSV file!")
+
+
 #####################################################
 
 
@@ -182,7 +186,7 @@ def LaunchProcess(bldidx, keyPath, nbcase, VarName2Change=[], Bounds=[], nbruns=
         problem['num_vars'] = len(VarName2Change)
         # problem = read_param_file(MainPath+'\\liste_param.txt')
 
-        if RUN_WITH_CALIBRATED_PARAMETERS:
+        if RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS:
             Param = read_calibrated_params(os.getcwd(), CaseName)
             print(f'Simulations with calibrated parameters ...')
 
@@ -278,13 +282,16 @@ def LaunchProcess(bldidx, keyPath, nbcase, VarName2Change=[], Bounds=[], nbruns=
     return MainPath, epluspath, Param
 
 
-RUN_WITH_CALIBRATED_PARAMETERS = True
+# Set the boolean parameter below to 'True' for using calibrating parameters
+# Set it to 'False' to find calibrated parameters
+RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS = False
+
 CaseName = 'ForTest'  # a folder_name to save input and outfile in form of pickles!
-BuildNum = [9] # building number(name) to be simulated
+BuildNum = [10]  # building number(name) to be simulated  #  [i for i in range(9, 17)]
 # check parameters names under DB_Building!
 VarName2Change = ['EnvLeak', 'setTempLoL', 'wwr', 'BasementAirLeak']
 Bounds = [[0.4, 2], [20, 23], [0.15, 0.35], [0.05, 2]]
-NbRuns = 10
+NbRuns = 200
 
 # SALib or SKOPT LHC-Centered
 SAMPLE_TYPE = False  # False -> SALib, True -> SKOPT LHC-Centered
@@ -346,5 +353,5 @@ if __name__ == '__main__':
     sys.path.remove(path2addgeom)
 
     print(f"Total execution time: {round((time.time() - start_time), 2)} s / "
-          f"{(time.time() - start_time) / 60} min "
+          f"{round(((time.time() - start_time) / 60),2)} min "
           f"for {NbRuns} simulations!")  # * len(VarName2Change) * len(BuildNum)

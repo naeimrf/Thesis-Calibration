@@ -31,29 +31,66 @@ def prepare_sensitivity_requirements(name, bounds, inputs, outputs):
     return problem, x, y
 
 
-def run_morris_analysis(problem, x, y):
+def run_morris_analysis(problem, x, y, built_in_plot=True):
     """
     Results are:
     mu - the mean elementary effect
     mu_star - the absolute of the mean elementary effect
     sigma - the standard deviation of the elementary effect
     mu_star_conf - the bootstrapped confidence interval
+    https://salib.readthedocs.io/en/latest/_modules/SALib/analyze/morris.html
     """
-
     print(f'\t- The start of Morris sensitivity analysis method ...')
-    Si = morris.analyze(problem, x, y, print_to_console=True, num_levels=4, num_resamples=100)
+    Si = morris.analyze(problem, x, y, print_to_console=True, num_levels=10)
 
-    fig1, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4))
-    fig1.canvas.set_window_title(f'MORRIS > the total effects of the input factors!')
-    horizontal_bar_plot(ax1, Si, {}, sortby='mu_star', unit=r'')
-    covariance_plot(ax2, Si, {}, unit=r"")
+    if built_in_plot:
+        # ‘xx-small’, ‘x-small’, ‘small’, ‘medium’, ‘large’, ‘x-large’, ‘xx-large’
+        params = {'legend.fontsize': 'large',
+                  'figure.figsize': (11, 4),
+                  'axes.labelsize': 'medium',
+                  'axes.titlesize': 'medium',
+                  'xtick.labelsize': 'small',
+                  'ytick.labelsize': 'small'}
+        plt.rcParams.update(params)
 
-    fig2 = plt.figure(figsize=(10, 4))
-    fig2.canvas.set_window_title(f'Histograms of the input samples for different parameters!')
-    sample_histograms(fig2, x, problem, {'color': 'dodgerblue'})
+        fig1, (ax1, ax2) = plt.subplots(1, 2)  # , figsize=(12, 3)
+        fig1.canvas.set_window_title(f'Morris with the total effects of the input factors (μ*)')
+        horizontal_bar_plot(ax1, Si, {}, sortby='mu_star', unit=r'')
+        covariance_plot(ax2, Si, {}, unit=r"")
 
-    print(f'\t+ Morris sensitivity analysis method is over!')
+        fig2 = plt.figure()  # figsize=(12, 3)
+        fig2.canvas.set_window_title(f'Histograms of the input samples for different parameters!')
+        fig2.text(0.06, 0.5, 'Number of occurrence', va='center', rotation='vertical')
+        sample_histograms(fig2, x, problem, {'color': 'dodgerblue'})
+        plt.show()
+
+    labels = Si['names']
+    mu_scores = np.array(Si['mu'])
+    mu_scores[mu_scores < 0] = 0.001  # replace negative sensitivity values with 0.001
+
+    fig3, ax3 = plt.subplots(figsize=(7, 3))
+    y_pos = np.arange(len(labels))
+    color = ['darkkhaki' if (xx < max(mu_scores)) else 'limegreen' for xx in mu_scores]
+    ax3.barh(y_pos, mu_scores, align='center', color=color, height=0.7)
+    ax3.set_yticks(y_pos)
+    ax3.set_yticklabels(labels, size=9)
+    ax3.invert_yaxis()  # labels read top-to-bottom
+    ax3.set_xlabel('Sensitivity score')
+
+    fig3.canvas.set_window_title(f'Morris with the primary effect of the input factors (μ)')
+    plt.tight_layout()
     plt.show()
+
+    # all measures in one plot!
+    df = pd.DataFrame(Si, index=labels)
+    df.plot(kind='bar', alpha=0.75, rot=0)
+    plt.xlabel("Parameters")
+    plt.ylabel("Sensitivity score of Morris method")
+    fig3 = plt.gcf()
+    fig3.canvas.set_window_title(f'Morris method with all measures')
+    plt.tight_layout()
+    plt.show()
+    print(f'\t+ Morris sensitivity analysis method is over!')
 
 
 def run_rbd_fast_analysis(problem, x, y):
@@ -68,35 +105,48 @@ def run_rbd_fast_analysis(problem, x, y):
     labels = Si['names']
     sizes = np.array(Si['S1'])
     sizes[sizes < 0] = 0.001  # replace negative sensitivity values with 0.001
+
+    fig1, ax1 = plt.subplots(figsize=(7, 3))
+    """
     explode = np.zeros(len(labels))
     idx = np.where(sizes == np.max(sizes))
     explode[idx] = 0.02
-
-    fig1, ax1 = plt.subplots()
     ax1.pie(sizes, explode=explode, labels=labels, autopct='%1.1f%%',
             normalize=True, shadow=False, startangle=90)
     ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+    """
+    y_pos = np.arange(len(labels))
+    color = ['slategrey' if (xx < max(sizes)) else 'limegreen' for xx in sizes]
+    ax1.barh(y_pos, sizes, align='center', color=color, height=0.7)
+    for y, x in zip(y_pos, sizes):
+        plt.annotate(str(round(x, 3)), xy=(x, y), va='center', size=8)
+    ax1.set_yticks(y_pos)
+    ax1.set_yticklabels(labels, size=9)
+    ax1.invert_yaxis()  # labels read top-to-bottom
+    ax1.set_xlabel('Sensitivity score')
+    # ax1.set_title('RDB')
 
     print(f'\t+ RDB FAST sensitivity analysis method is over!')
-    fig1.canvas.set_window_title(f'RDB-FAST > first order of input factors!')
+    fig1.canvas.set_window_title(f'RDB-FAST: First order of input factors')
+    plt.tight_layout()
     plt.show()
 
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 # SENSITIVITY RUN * * * * * * * *
 print(f"* Sensitivity analysis started ...")
-"""
+
 _, _, _, _, _, _, params_build = read_epc_values(lb.VarName2Change, 0)
 sim_data, _ = read_simulation_files()
 total_sim_results = get_simulation_runs(lb.BuildNum, sim_data)
 problem, x, y = prepare_sensitivity_requirements(lb.VarName2Change, lb.Bounds, params_build, total_sim_results)
-run_morris_analysis(problem, x, y)
+run_morris_analysis(problem, x, y, built_in_plot=False)
 run_rbd_fast_analysis(problem, x, y)
-"""
+
 print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
       f" {round(((time.time() - start_time) / 60), 2)}min!")
 
-# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+# METHODS RELATED TO RANDOM SAMPLING COMPARISON  - - - - - - - -
 def manual_lhc(n):
     # https://www.youtube.com/watch?v=r6rp-Qxc9xI
     lower_band = np.arange(0, n) / n
@@ -231,7 +281,7 @@ def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
     plt.show()
 
 
+# COMPARISON RUN * * * * * * * *
 space = Space([(0.15, float(0.35))])
-sample_nbr = 7
-centered, salib = generate_randomness(space.dimensions, sample_nbr)
-compare2_methods(centered, salib, space.dimensions, sample_nbr, 'Centered-LHC', 'SALib-LHC')
+# centered, salib = generate_randomness(space.dimensions, lb.sample_nbr)
+# compare2_methods(centered, salib, space.dimensions, lb.sample_nbr, 'Centered-LHC', 'SALib-LHC')

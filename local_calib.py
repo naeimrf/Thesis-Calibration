@@ -29,8 +29,8 @@ def my_print(*args):
 def get_file_names(BuildNum, NbRuns, path, alternative):
     """
     This method is to find or make simulation file names
-    alternative to 0 -> based on generated input file names
-    alternative to 1 -> based on existing simulation file names
+    alternative 0 -> based on generated input file names
+    alternative 1 -> based on existing simulation file names
     This function also checks the existing number of files against the number of simulations asked by user!
     """
     if os.path.isfile(path + "/theta_prime.csv"):
@@ -88,7 +88,7 @@ def read_epc_values(params_list, surface_type):
     """
     read_time1 = time.time()
     print(f'\t- Reading of input files with pickle format started ...')
-    input_files = get_file_names(lb.BuildNum, lb.NbRuns, res_path, 0)
+    input_files = get_file_names(lb.BuildNum, lb.NbRuns, res_path, 1)
     building_ids = input_files.keys()
 
     epc, area, total, total_per_area, enj_per = dict(), dict(), dict(), dict(), dict()
@@ -336,6 +336,10 @@ def passed_cases_one_building(error_dict, nbr, alpha):
     plt.scatter(sim_size, error_to_plot, c=error_colors)
     plt.axhline(y=alpha, color='r', linestyle='--')
 
+    y = min(error_dict[nbr].values())
+    plt.annotate(str(round(y, 2))+"%", (np.argmin(error_to_plot), y),
+                 xytext=(0, 10), textcoords="offset points", ha='center')
+
     plt.xlabel(f'Number of simulations for building {nbr}')
     plt.ylabel('Percentage of Error')
     fig = plt.gcf()
@@ -353,9 +357,13 @@ def passed_cases_all_buildings(error_dict, alpha):
     building_ids = error_dict.keys()
 
     all_errors_list = []
+    min_error_per_building = {}
     for id in building_ids:
         tmp = list(np.fromiter(error_dict[id].values(), dtype=float))
         all_errors_list += tmp
+        min_value = min(error_dict[id].values())
+        min_idx = tmp.index(min(tmp)) + len(error_dict[id]) * list(building_ids).index(id)
+        min_error_per_building.update({id: (min_value, min_idx)})
     all_errors_list = np.array(all_errors_list)
 
     passed_size = len(all_errors_list[all_errors_list < alpha])
@@ -365,6 +373,13 @@ def passed_cases_all_buildings(error_dict, alpha):
     error_colors = np.where(all_errors_list < alpha, 'g', 'k')
     plt.scatter(sim_size, all_errors_list, c=error_colors)
     plt.axhline(y=alpha, color='r', linestyle='--')
+
+    for id in building_ids:
+        min_value = min_error_per_building[id][0]
+        min_idx = min_error_per_building[id][1]
+        color = 'g' if min_value <= alpha else 'r'
+        plt.annotate((str(round(min_value, 2))+"%", id), (min_idx, min_value),
+                     xytext=(0, 10), textcoords="offset points", ha='center', color=color)
 
     plt.xlabel(f'Number of all simulations for buildings: {[i for i in building_ids]}')
     plt.ylabel('Percentage of Error')
@@ -914,7 +929,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
     # * ALGORITHM STEP3: ERROR QUALIFICATION (α) * * * * * * * * * * /
     total_sim_results, _, errors, acceptable = \
         compare_results(buildings, sim_data, total_epc, model_area, alpha=alpha,
-                        per_building=False, all_buildings=True, plots=all_plots)
+                        per_building=True, all_buildings=True, plots=all_plots)
 
     # * ALGORITHM STEP4: TEST OF ASSUMPTIONS (β) * * * * * * * * * * /
     unexplained_buildings = []
@@ -963,13 +978,13 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
 
 # CALIBRATION RUN * * * * * * * *
 if __name__ == '__main__':
-    if lb.RUN_WITH_CALIBRATED_PARAMETERS:
-        print(f'*Simulation results for buildings: {lb.BuildNum} with calibrated parameters*')
-        _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 0)
+    if lb.RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS:
+        print(f'* Simulation results for buildings: {lb.BuildNum} with calibrated parameters *')
+        _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 1)
         sim_data, model_area = read_simulation_files()
         total_sim_results, _, errors, acceptable = \
-            compare_results(lb.BuildNum, sim_data, total_epc, model_area, alpha=7,
-                            per_building=False, all_buildings=True, plots=True)
+            compare_results(lb.BuildNum, sim_data, total_epc, model_area, alpha=2,
+                            per_building=True, all_buildings=True, plots=True)
 
         # TODO: BELOW ARE DUMMY VALUES, FIX IT!
         n = 1000
@@ -978,11 +993,11 @@ if __name__ == '__main__':
         series1 = u1 + np.random.randn(n)
         series2 = u2 + np.random.randn(n)
         plot_metered_vs_simulated_energies(series1, series2, bins=20)
-        print(f'** Illustration of results by calibrated parameters is over.*')
+        print(f'** Illustration of the results by calibrated parameters is over *')
     else:
         # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
-        calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum, alpha=7,
-                    beta=90, final_samples=10, discrete=lb.sample_nbr, all_plots=True, approach=1)
+        calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum, alpha=5,
+                    beta=90, final_samples=100, discrete=lb.sample_nbr, all_plots=True, approach=1)
 
         # Prior presentation of real samples for selected parameters
         if lb.SAMPLE_TYPE:
