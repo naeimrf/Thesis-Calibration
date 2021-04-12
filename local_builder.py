@@ -284,14 +284,14 @@ def LaunchProcess(bldidx, keyPath, nbcase, VarName2Change=[], Bounds=[], nbruns=
 
 # Set the boolean parameter below to 'True' for using calibrating parameters
 # Set it to 'False' to find calibrated parameters
-RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS = False
+RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS = True
 
 CaseName = 'ForTest'  # a folder_name to save input and outfile in form of pickles!
 BuildNum = [10]  # building number(name) to be simulated  #  [i for i in range(9, 17)]
 # check parameters names under DB_Building!
 VarName2Change = ['EnvLeak', 'setTempLoL', 'wwr', 'BasementAirLeak']
 Bounds = [[0.4, 2], [20, 23], [0.15, 0.35], [0.05, 2]]
-NbRuns = 200
+NbRuns = 700
 
 # SALib or SKOPT LHC-Centered
 SAMPLE_TYPE = False  # False -> SALib, True -> SKOPT LHC-Centered

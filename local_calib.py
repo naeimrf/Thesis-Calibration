@@ -1,427 +1,26 @@
-import os, time, pickle, copy
+import os, time, pickle
 import local_builder as lb
+import local_utility as lu
+import local_plots as lp
 import numpy as np, seaborn as sns, pandas as pd
 import matplotlib.pyplot as plt
-import math, random, statistics
-from collections import Counter
+import math, random
 from scipy import stats, linalg
 from SALib.sample import latin
-from pathlib import Path
 
 start_time = time.time()
 test_path = os.path.join(os.getcwd(), lb.CaseName)
-# print(f'test_path:{test_path}, type:{type(test_path)}')
 
 # 'Sim_Results' is added with respect to LaunchSim.py line 27
 res_path = test_path + "/Sim_Results"
-
 # Change the current working directory to the result folder
 os.chdir(test_path)
-
-
-def my_print(*args):
-    print("- - - Function results - - -")
-    for i in args:
-        print(f'-> {i}')
-    print("- - - Function Ends - - - - - - -")
-
-
-def get_file_names(BuildNum, NbRuns, path, alternative):
-    """
-    This method is to find or make simulation file names
-    alternative 0 -> based on generated input file names
-    alternative 1 -> based on existing simulation file names
-    This function also checks the existing number of files against the number of simulations asked by user!
-    """
-    if os.path.isfile(path + "/theta_prime.csv"):
-        os.remove(path + "/theta_prime.csv")
-        print("\t-> Previous calibrated parameter file 'theta_prime.csv' is removed.")
-
-    # check the number of simulations in the result folder and produce their names
-    all_files = os.listdir(path)
-    if NbRuns * len(BuildNum) != len(all_files) / 2:
-        print(f"\t-> Something is WRONG, number of exiting files does not equal to 'BuildNum'!")
-        print(f'\t-> Existing result pickle files:{len(all_files) / 2} != Simulations asked in builder.py:{NbRuns * len(BuildNum)}')
-        raise ValueError("Missing simulation files!")
-
-    lst = {}
-    if alternative:
-        # find simulation file names to extract energy results
-        # method 1
-        for file in all_files:
-            if file.endswith('.pickle'):
-                for cn in BuildNum:
-                    if str(cn) + 'v' in file:  # if file.find(cn):
-                        if cn in lst:
-                            value = lst[cn]
-                            value.append(file)
-                        else:
-                            lst[cn] = [file]
-        # print(f'Names retrieved from existing files:\n{lst}')
-    else:
-        # recreate simulation file names to extract energy results
-        # method 2
-        for bld in BuildNum:
-            for i in range(lb.NbRuns):
-                if bld in lst:
-                    value = lst[bld]
-                    value.append('Building_' + str(bld) + 'v' + str(i) + ".pickle")
-                else:
-                    lst[bld] = ['Building_' + str(bld) + 'v' + str(i) + ".pickle"]
-        # print(f'Synthetically created files:\n{lst}')
-    return lst
-
-
-def read_epc_values(params_list, surface_type):
-    """
-    This method reads probabilistic input parameters and EPC values from pickle files in the RESULT folder!
-    Select surface_type equal to 1 to apply A_temp or 0 to apply EnergyPLus geometric area!!
-
-    The stored input values in result pickle files retrieved in this function are:
-    epc (KWh)-> all non-zero EPC values saved in the result files (pickle format) originally read from a geojson file
-    area (m2)-> A_temp and EPHeatedArea areas from geojson file and heated area from Energy plus model
-    total (KWh)-> A sum energy consumption for building categorized in groups: 'Heating', 'DHW', 'Cooling', 'ElecLoad' and 'NRJandClass'
-    total_per_area (KWh/m2)-> sum of each category of energy normalized by surface area
-    enj_per (KWh/m2)-> building energy performance
-    prob_params -> Two dictionaries of all probabilistic parameters with their random generated values by Latin Hyper Cube,
-    one dictionary to hold probabilistic parameters building-vice and one dictionary to hold them parameter-vice
-    """
-    read_time1 = time.time()
-    print(f'\t- Reading of input files with pickle format started ...')
-    input_files = get_file_names(lb.BuildNum, lb.NbRuns, res_path, 1)
-    building_ids = input_files.keys()
-
-    epc, area, total, total_per_area, enj_per = dict(), dict(), dict(), dict(), dict()
-    prob_params_cat = {}
-    prob_params_building = {}
-    # 'for-loop' to handle more than one building
-    for id in building_ids:
-        # only one input_file for each building is enough to get the EPCs!
-        temp = open(input_files[id][0], 'rb')
-        temp_building = pickle.load(temp)
-        temp.close()
-
-        # dig into the BuildData & EPCMeters
-        building = temp_building['BuildData']
-        epc[id] = copy.deepcopy(building.EPCMeters)
-
-        meters = building.EPCMeters.keys()
-        area.update({id: {}})
-        area[id].update({'surface': building.surface})
-        area[id].update({'EPHeatedArea': building.EPHeatedArea})
-
-        # section below removes zero EPCMeters from the final result!
-        # also total energy consumption per surface area, is calculated!
-        total[id] = {}
-        total_per_area[id] = {}
-        for meter in meters:
-            tot_tmp = 0
-            for key, value in building.EPCMeters[meter].items():
-                if not value:
-                    del epc[id][meter][key]
-                else:
-                    if 'NRJ' not in meter:
-                        tot_tmp += value
-            total[id].update({meter: tot_tmp})
-
-            if surface_type:
-                surf = area[id]['surface']
-            else:
-                surf = area[id]['EPHeatedArea']
-            total_per_area[id].update({meter: (tot_tmp / surf)})
-        # building energy performance
-        enj_per[id] = sum(total_per_area[id].values())
-
-        # retrieve probabilistic parameters for each simulation (building case)!
-        prob_params_cat[id] = {}
-        prob_params_building[id] = {}
-        for i in range(len(input_files[id])):
-            build_case = input_files[id][i]
-            temp = open(build_case, 'rb')
-            temp_building = pickle.load(temp)
-            temp.close()
-
-            # the script below gathers parameters CATEGORICAL-vice
-            building = temp_building['BuildData']
-            for param in params_list:
-                if param not in prob_params_cat[id]:
-                    prob_params_cat[id][param] = []
-                temp_val = getattr(building, param)
-                prob_params_cat[id][param].append(temp_val)
-
-                # the script below gathers parameters BUILDING-vice
-                building_name = build_case.replace('.pickle', '')
-                if building_name not in prob_params_building[id]:
-                    prob_params_building[id][building_name] = []
-                prob_params_building[id][building_name].append(temp_val)
-
-    print(f'\t+ Reading of inputs is done in {round((time.time() - read_time1), 2)}s!')
-    # my_print(epc, area, total, total_per_area, enj_per, prob_params_cat, prob_params_building)
-    return epc, area, total, total_per_area, enj_per, prob_params_cat, prob_params_building
-
-
-def read_simulation_files():
-    read_time2 = time.time()
-    print(f'\t- Reading of result files with pickle format started ...')
-    result_files = get_file_names(lb.BuildNum, lb.NbRuns, res_path, 1)
-
-    os.chdir(res_path)  # change the working directory to result files!
-
-    simulated, model_area = dict(), dict()
-    for key, value in result_files.items():
-        simulated[key] = {}
-        model_area[key] = {}
-
-        for building in result_files[key]:
-            building_name = building.replace('.pickle', '')
-            simulated[key][building_name] = {}
-            with open(building, 'rb') as handle:
-                build_result = pickle.load(handle)
-
-            for k, v in build_result['HeatedArea'].items():
-                if not isinstance(v[0], str):  # to avoid time-interval name ex. 'Hourly' and units in results!
-                    simulated[key][building_name].update({k: (sum(v) / (3600 * 1000))})  # joule to Kwh
-
-        model_area[key].update({'EPlusTotArea': build_result['EPlusTotArea']})
-        model_area[key].update({'EPlusHeatArea': build_result['EPlusHeatArea']})
-        model_area[key].update({'EPlusNonHeatArea': build_result['EPlusNonHeatArea']})
-
-    print(f'\t+ Reading of result files is done in {round((time.time() - read_time2), 2)}s!')
-    # my_print(simulated, model_area)
-    return simulated, model_area
-
-
-def find_closest_value(arr, val):
-    arr = np.asarray(arr)
-    idx = (np.abs(arr - val)).argmin()
-    return arr[idx]
-
-
-def get_projected_freq(theoretical_xlabels, lpc_xlabels, groups):
-    """
-    This function fits random numbers from LHC to theoretical distribution range
-    and returns the frequencies of projected values from actual LHC values
-    """
-    lpc_theoretical_projected = []
-    for theo_v, lpc_v in zip(theoretical_xlabels, lpc_xlabels):
-        tmp = []
-        for i in range(len(lpc_v)):
-            tmp.append(find_closest_value(theo_v, lpc_v[i]))
-        lpc_theoretical_projected.append(tmp)
-
-    lpc_freq = [[] for _ in range(groups)]
-    lpc_theoretical_projected = [sorted(i) for i in lpc_theoretical_projected]
-    length = len(lpc_theoretical_projected[0])
-    j = 0
-    for t, l in zip(theoretical_xlabels, lpc_theoretical_projected):
-        nbr = Counter(l)
-        for i in range(len(t)):
-            lpc_freq[j].append((nbr.get(t[i], 0)) / length)  # returns the frequency of a key if exists otherwise zero!
-        j += 1
-
-    return lpc_freq
-
-
-def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message, color):
-    groups = len(params)
-    x = np.arange(discrete)  # position of groups, using X to align the bars side by side
-
-    width = 0.75
-    fig, axs = plt.subplots(1, groups, figsize=(7, 4.5), sharey='all')
-
-    for n, ax in enumerate(axs):
-        ax.bar(x, theoretical_freq[n], color='gray', alpha=0.7,
-               width=width, align='center', edgecolor='white')
-        ax.bar(x, lpc_freq[n], color=color, alpha=0.5,
-               width=width, align='center', edgecolor='white')
-
-        ax.set_title(params[n], fontsize=10)
-        ax.set_xticks(x)
-        ax.set_xticklabels(theoretical_xlabels[n], rotation='vertical', fontsize=9)
-
-    # Real numbers in simulation are based on Latin Hyper Cube method!
-    fig.text(0.04, 0.5, f'Theoretical frequency of uncertain parameters ({round((1 / discrete), 3)})',
-             va='center', rotation='vertical', fontsize=10)
-
-    plt.ylim(0, np.max(np.array(lpc_freq)) * 1.1)  # set y range 10% more than maximum value of frequencies
-    plt.yticks(size=7)
-    fig.canvas.set_window_title(message)
-
-    plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time * 3)  # seconds
-    # plt.close()
-
-
-def plot_prior_distributions(params, ranges, buildings, discrete, per_building=True, SALib=True, **kwargs):
-    """
-    This method plots the actual prior samplings over the theoretical distribution per building
-    """
-    print(f'\t- The start of plot_prior_distributions method ...')
-    groups = len(params)
-    theoretical_freq = [[1 / discrete] * discrete] * groups
-    lhc = kwargs.get('LHC')  # Latin Hyper Cube Frequencies
-
-    lhc_xlabels_all_buildings = [[] for _ in range(groups)]
-
-    for b_nbr in buildings:
-        theoretical_xlabels = []
-        for pr in ranges:
-            if pr[0] < 0.01:
-                theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 3)))
-            else:
-                theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 2)))
-
-        lhc_xlabels = []
-
-        for i, param in enumerate(params):
-            lhc_xlabels.append(lhc[b_nbr][param])
-            lhc_xlabels_all_buildings[i] += lhc[b_nbr][param]
-
-    if per_building:
-        for b_nbr in buildings:
-            if not SALib:
-                message = f'Constant probabilistic parameters vs SALib-LHC in building {b_nbr}'
-            else:
-                message = f'Constant probabilistic parameters vs Centered-LHC in building {b_nbr}'
-            lhc_freq = get_projected_freq(theoretical_xlabels, lhc_xlabels, groups)
-            plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='blue')
-    else:
-        if not SALib:
-            message = f'Constant probabilistic parameters for all buildings with SALib-LHC'
-        else:
-            message = f'Constant probabilistic parameters for all buildings with Centered-LHC'
-        lhc_freq = get_projected_freq(theoretical_xlabels, lhc_xlabels_all_buildings, groups)
-        plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='blue')
-
-    print(f'\t+ plot_prior_distributions method is over!')
-
-
-def plot_calibrated_parameters(data_frame, ranges, discrete, plot=True):
-    if 'Buildings' in data_frame.columns:
-        del data_frame['Buildings']
-
-    params = data_frame.columns.values.tolist()
-    groups = len(params)
-
-    theoretical_xlabels = []
-    for pr in ranges:
-        if pr[0] < 0.01:
-            theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 3)))
-        else:
-            theoretical_xlabels.append(list(np.round(np.linspace(pr[0], pr[1], discrete), 2)))
-
-    lhc_xlabels = []
-    for param in params:
-        tmp = data_frame[param].tolist()
-        lhc_xlabels.append(tmp)
-
-    theoretical_freq = [[1 / discrete] * discrete] * groups
-    message = f'Prior and posterior marginal distributions for calibrated parameters'
-    lhc_freq = get_projected_freq(theoretical_xlabels, lhc_xlabels, groups)
-    if plot:
-        plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='green')
-
-    return lhc_freq
-
-
-def passed_cases_one_building(error_dict, nbr, alpha):
-    # plot error values
-    error_to_plot = np.fromiter(error_dict[nbr].values(), dtype=float)
-    passed_size = len(error_to_plot[error_to_plot < alpha])
-    sim_size = range(len(error_to_plot))
-
-    plt.figure(figsize=(7, 4), dpi=80)
-    error_colors = np.where(error_to_plot < alpha, 'g', 'k')
-    plt.scatter(sim_size, error_to_plot, c=error_colors)
-    plt.axhline(y=alpha, color='r', linestyle='--')
-
-    y = min(error_dict[nbr].values())
-    plt.annotate(str(round(y, 2))+"%", (np.argmin(error_to_plot), y),
-                 xytext=(0, 10), textcoords="offset points", ha='center')
-
-    plt.xlabel(f'Number of simulations for building {nbr}')
-    plt.ylabel('Percentage of Error')
-    fig = plt.gcf()
-    perc = round((passed_size / len(error_to_plot)) * 100, 2)
-    fig.canvas.set_window_title(f'{passed_size}/{len(error_to_plot)} ({perc}%) '
-                                f'of tests with error lower than {alpha}%')
-    plt.tight_layout()
-    plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time)
-    # plt.close()
-
-
-def passed_cases_all_buildings(error_dict, alpha):
-    building_ids = error_dict.keys()
-
-    all_errors_list = []
-    min_error_per_building = {}
-    for id in building_ids:
-        tmp = list(np.fromiter(error_dict[id].values(), dtype=float))
-        all_errors_list += tmp
-        min_value = min(error_dict[id].values())
-        min_idx = tmp.index(min(tmp)) + len(error_dict[id]) * list(building_ids).index(id)
-        min_error_per_building.update({id: (min_value, min_idx)})
-    all_errors_list = np.array(all_errors_list)
-
-    passed_size = len(all_errors_list[all_errors_list < alpha])
-    sim_size = range(len(all_errors_list))
-
-    plt.figure(figsize=(7, 4), dpi=80)
-    error_colors = np.where(all_errors_list < alpha, 'g', 'k')
-    plt.scatter(sim_size, all_errors_list, c=error_colors)
-    plt.axhline(y=alpha, color='r', linestyle='--')
-
-    for id in building_ids:
-        min_value = min_error_per_building[id][0]
-        min_idx = min_error_per_building[id][1]
-        color = 'g' if min_value <= alpha else 'r'
-        plt.annotate((str(round(min_value, 2))+"%", id), (min_idx, min_value),
-                     xytext=(0, 10), textcoords="offset points", ha='center', color=color)
-
-    plt.xlabel(f'Number of all simulations for buildings: {[i for i in building_ids]}')
-    plt.ylabel('Percentage of Error')
-    fig = plt.gcf()
-    perc = round((passed_size / len(all_errors_list)) * 100, 2)
-    fig.canvas.set_window_title(f'{passed_size}/{len(all_errors_list)} ({perc}%) '
-                                f'of tests with error lower than {alpha}%')
-    plt.tight_layout()
-    plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time*2)
-    # plt.close()
-
-
-def get_simulation_runs(buildings, simulations):
-    # prepare simulation results to compare - - -
-    heat_el_result = {}  # Hot water consumption is not included!
-    total_sim_result = {}
-
-    for nbr in buildings:
-        heat_el_result[nbr] = {}
-        total_sim_result[nbr] = {}
-        building_names = simulations[nbr].keys()
-
-        for bn in building_names:
-            heat_el_result[nbr][bn] = []
-            tmp = 0
-            for key, value in simulations[nbr][bn].items():
-                if '_Electric' in key:
-                    heat_el_result[nbr][bn].append(value)  # Kwh
-                    tmp += value
-                elif 'Ideal Loads Zone Total Heating' in key:
-                    heat_el_result[nbr][bn].append(value)
-                    tmp += value
-            total_sim_result[nbr].update({bn: tmp})
-    return total_sim_result
 
 
 def compare_results(buildings, simulations, measurements, area,
                     alpha=5, per_building=False, all_buildings=True, plots=True):
     # prepare simulation results to compare - - -
-    total_sim_result = get_simulation_runs(buildings, simulations)
+    total_sim_result = lu.get_simulation_runs(buildings, simulations)
 
     # - - - - - - - - - - - - - - - -
     reference = {}  # from measurements
@@ -438,10 +37,10 @@ def compare_results(buildings, simulations, measurements, area,
             errors[nbr].update({key: err})
 
         if plots and per_building:
-            passed_cases_one_building(errors, nbr, alpha)
+            lp.passed_cases_one_building(errors, nbr, alpha)
 
     if plots and all_buildings:
-        passed_cases_all_buildings(errors, alpha)
+        lp.passed_cases_all_buildings(errors, alpha)
 
     # KEEP acceptable buildings with respect to alpha!
     acceptable = {}
@@ -510,94 +109,15 @@ def make_joint_distribution(buildings, acceptable, discrete, plot=True):
                                     f' validated combination of parameters')
         g.fig.set_size_inches(9, 6)
         g.map_upper(get_correlation_pearsonr)
-        # g._legend.remove()
         plt.show()
-        # plt.show(block=False)
-        # plt.pause(plot_time * 6)
-        # plt.close()
 
-    # print(f'{df}')
     print(f'\t+ Joint distribution method is over!')
     return df
 
 
-def plot_joint_distributions(data_frame, discrete):
-    del data_frame['Buildings']
-
-    sns.set_theme(style="white")
-    cmap = sns.cubehelix_palette(light=1.5, as_cmap=True)
-
-    header = list(data_frame.columns)
-    graph = {}
-    for i in range(len(header) - 1):
-        graph[f'g{i + 1}'] = None
-
-    i = 0
-    for key in graph:
-        graph[key] = sns.JointGrid(data=data_frame, x=header[0], y=header[i + 1], space=0)
-        graph[key].plot_joint(sns.kdeplot, fill=True, clip=((lb.Bounds[0]), (lb.Bounds[i + 1])),
-                              thresh=0, levels=discrete, cmap=cmap).plot_joint(sns.scatterplot)
-        graph[key].plot_marginals(sns.histplot, color="gray", alpha=1, bins=5)
-        graph[key].savefig(f'{key}.png')
-        plt.close(fig=None)
-        i += 1
-
-    fig, ax = plt.subplots(nrows=1, ncols=len(header) - 1, figsize=(10, 4))
-    i = 0
-    for key in graph.keys():
-        ax[i].imshow(plt.imread(f'{key}.png'))
-        i += 1
-
-    fig.canvas.set_window_title(f'A kernel density estimate of validated combination of parameters')
-    [ax.set_axis_off() for ax in ax.ravel()]
-    plt.tight_layout()
-    plt.show()
-
-    for key in graph.keys():
-        os.remove(f'{key}.png')
-
-
-def plot_combinations(var_names, bounds, combs, points, sample_nbr):
-    info = dict(zip(var_names, bounds))
-    var_nbr = len(var_names)
-    tmp = []
-    for var in var_names:
-        for i in range(sample_nbr):
-            tmp.append(var)
-    var_names = tmp
-
-    freq = {}
-    for point in points:
-        for p in point:
-            freq[p] = sum(x.count(p) for x in combs)
-
-    keys = list(freq.keys())
-    keys = [round(elem, 2) for elem in keys]
-    vals = list(freq.values())
-    table = {'Variables': var_names, 'Range of middle points': keys, 'Frequency': vals}
-    table = pd.DataFrame.from_dict(table)
-
-    plt.figure(figsize=(8, 4))
-    g = sns.barplot(x='Range of middle points', y='Frequency', data=table, hue='Variables', dodge=False)
-    g.set_xticklabels(g.get_xticklabels(), rotation=90)
-
-    fig = plt.gcf()
-    fig.canvas.set_window_title("Frequency of real samples with skopt-Centered-LHC ")
-
-    to_print = ''
-    for i in range(var_nbr - 1):
-        to_print += str(sample_nbr) + 'x'
-    to_print += str(sample_nbr)
-    plt.title(f'{var_nbr} variables & {sample_nbr} samples: {to_print} '
-              f'= {sample_nbr ** var_nbr} combinations!\n{info}', fontsize=9)
-    plt.legend(bbox_to_anchor=(1.02, 1), loc=2)
-    plt.tight_layout()
-    plt.show()
-
-
-# 'eigenvectors' -> cholesky=False
 def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plots=True):
     """
+    # 'eigenvectors' -> cholesky=False
     This function generates random samples from a covariance matrix based on correlated samples
     or directly from correlated samples to calculate covariance matrix first.
     Explanation below from:
@@ -687,20 +207,6 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
     return y_transformed
 
 
-def second_largest(numbers):
-    # https://stackoverflow.com/questions/16225677/get-the-second-largest-number-in-a-list-in-linear-time
-    count = 0
-    m1 = m2 = float('-inf')
-    for x in numbers:
-        count += 1
-        if x > m2:
-            if x >= m1:
-                m1, m2 = x, m1
-            else:
-                m2 = x
-    return m2 if count >= 2 else None
-
-
 def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True):
     """
     The third parameter is used when plot option is set to 'True' for presenting the number of distributions
@@ -709,8 +215,8 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
     """
     read_time3 = time.time()
     print(f'\t- Finding the best distributions started ...')
-    distributions = ['foldcauchy', 'cauchy', 'alpha', 'dweibull', 'genextreme', 'pearson3', 'dgamma']
-    """
+
+    # distributions = ['foldcauchy', 'cauchy', 'alpha', 'dweibull', 'genextreme', 'pearson3', 'dgamma']
     distributions = ['alpha', 'anglit', 'arcsine', 'beta', 'betaprime', 'bradford', 'burr', 'cauchy', 'chi', 'chi2',
                      'cosine', 'dgamma', 'dweibull', 'erlang', 'expon', 'exponweib', 'exponpow', 'f', 'fatiguelife',
                      'fisk', 'foldcauchy', 'foldnorm', 'genlogistic', 'genpareto', 'genexpon', 'gumbel_r',
@@ -721,7 +227,7 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
                      'pareto', 'pearson3', 'powerlaw', 'powerlognorm', 'powernorm', 'rdist', 'reciprocal', 'rayleigh',
                      'rice', 'recipinvgauss', 'semicircular', 't', 'triang', 'truncexpon', 'truncnorm', 'tukeylambda',
                      'uniform', 'vonmises', 'wald', 'weibull_min', 'weibull_max', 'wrapcauchy']
-    """
+
     param_names = list(calib_params.columns.values)
     # Danoe's formula to find optimum number of bins
     if Danoe:
@@ -796,9 +302,9 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
                 y_plot = dist.pdf(x_plot, loc=loc, scale=scale, *arg)
 
                 # FIXME: A QUICK SOLUTION TO AVOID ERROR JUMP IN y_plot!
-                if second_largest(y_plot) * 10 < max(y_plot):
+                if lu.second_largest(y_plot) * 10 < max(y_plot):
                     index_max = max(range(len(y_plot)), key=y_plot.__getitem__)
-                    y_plot[index_max] = second_largest(y_plot) * 2
+                    y_plot[index_max] = lu.second_largest(y_plot) * 2
 
                 plt.plot(x_plot, y_plot, label=distro + ": " + str(sse)[0:6],
                          color=(random.uniform(0, 1), random.uniform(0, 1), random.uniform(0, 1)))
@@ -870,32 +376,6 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
     return salib_samples
 
 
-def plot_metered_vs_simulated_energies(metered, simulated, bins=20):
-    metered_mean = statistics.mean(metered)
-    simulated_mean = statistics.mean(simulated)
-
-    # From scipy documentation: if the K-S statistic is small or the p-value is high, then we cannot reject
-    # the hypothesis that the distributions of the two samples are the same.
-    # If p-value is lower than a=0.05 or 0.01, then it is very probable that the two distributions are different.
-    ks_test = stats.ks_2samp(metered, simulated)
-
-    plt.figure(figsize=(6, 4))
-    plt.hist(metered, bins=bins, label='Metered', alpha=0.5, color='red', histtype='step')
-    plt.hist(simulated, bins=bins, label='Simulated', alpha=0.8, color='gray', histtype='barstacked')
-    plt.axvline(x=metered_mean, ls='--', alpha=0.5, color='red', label='Metered mean')
-    plt.axvline(x=simulated_mean, ls='-', alpha=0.5, color='black', label='Simulated mean')
-    plt.title(
-        f'Metered mean:{round(metered_mean, 2)} vs Simulated_mean:{round(simulated_mean, 2)}\nKS-p_value:{round(ks_test[1], 2)}',
-        color="k", fontsize=9)
-    plt.xlabel('EUI(kWh/m2)')
-    plt.ylabel('Frequency')
-    plt.legend(loc='best')  # bbox_to_anchor=(1.04, 1)
-    # plt.xticks(np.arange(min(simulated), max(simulated)+1, 5.0))
-
-    plt.tight_layout()
-    plt.show()
-
-
 def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings, final_samples=100,
                                alpha=5, beta=85, discrete=5, all_plots=True, approach=1):
     """
@@ -917,14 +397,14 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
     if not all_plots:
         print("** THE PLOT OPTION IS OFF, CHANGE TO 'TRUE' TO SEE THE RESULTS! **")
     # * ALGORITHM STEP1: PARAMETER DEFINITION * * * * * * * * * * /
-    _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 0)
+    _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(lb.VarName2Change, 0, res_path)
     if all_plots:
-        plot_prior_distributions(params, params_ranges, buildings, discrete,
+        lp.plot_prior_distributions(params, params_ranges, buildings, discrete,
                                  per_building=False, SALib=lb.SAMPLE_TYPE, LHC=params_cat)
 
     # * ALGORITHM STEP2: PARAMETRIC SIMULATION * * * * * * * * * * /
     print(f"\t-> {nbr_sim_uncalib} random simulations out of {discrete ** (len(params))} possible combinations!")
-    sim_data, model_area = read_simulation_files()
+    sim_data, model_area = lu.read_simulation_files(res_path)
 
     # * ALGORITHM STEP3: ERROR QUALIFICATION (α) * * * * * * * * * * /
     total_sim_results, _, errors, acceptable = \
@@ -956,7 +436,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
     # if all_plots: # FIXME: AN EXTRA PLOT, CORRELATION OF PARAMETERS, UNCOMMENT TO SEE.
     #    plot_joint_distributions(calib_params, discrete)
 
-    calib_frequencies = plot_calibrated_parameters(calib_params, lb.Bounds, discrete, plot=all_plots)
+    calib_frequencies = lp.plot_calibrated_parameters(calib_params, lb.Bounds, discrete, plot=all_plots)
 
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
     # Save and send the result back to local_builder for simulations with θ'
@@ -972,19 +452,44 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
         theta_prime = make_random_from_continuous(best_distros, lb.Bounds, smpl, plot=all_plots)
         np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
 
+    print(f'\t-> Calibrated parameters are saved as "theta_prime.csv" file in:\n\t{res_path}')
     print(f'+ Calibration method is over!')
     return 0
+
+
+def return_best_combination_for_each_building(path, params_build, errors, param_names):
+
+    best_simulations = {}
+    building_ids = errors.keys()
+    for id in building_ids:
+        best_version = min(errors[id].items(), key=lambda x: x[1])
+        best_simulations.update({id: best_version[0]})
+
+    best_combinations = {}
+    for id, version in zip(building_ids, best_simulations.values()):
+        best_combinations.update({id: params_build[id][version]})
+
+    df = pd.DataFrame(best_combinations, index=param_names)
+    print(f'\t-> Best combinations of probabilistic parameters for buildings:\n{df}')
+
+    df.to_csv('best_combinations.csv', sep=',', index=True)
+
+    print(f"\t-> Best combinations of probabilistic parameters for all simulated "
+          f"buildings are saved as 'best_combinations.csv' file in:\n\t-> {path}")
+    return df
 
 
 # CALIBRATION RUN * * * * * * * *
 if __name__ == '__main__':
     if lb.RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS:
         print(f'* Simulation results for buildings: {lb.BuildNum} with calibrated parameters *')
-        _, a_temp, total_epc, _, _, params_cat, params_build = read_epc_values(lb.VarName2Change, 1)
-        sim_data, model_area = read_simulation_files()
+        _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(lb.VarName2Change, 0, res_path)
+        sim_data, model_area = lu.read_simulation_files(res_path)
         total_sim_results, _, errors, acceptable = \
-            compare_results(lb.BuildNum, sim_data, total_epc, model_area, alpha=2,
+            compare_results(lb.BuildNum, sim_data, total_epc, model_area, alpha=7,
                             per_building=True, all_buildings=True, plots=True)
+
+        _ = return_best_combination_for_each_building(res_path, params_build, errors, lb.VarName2Change)
 
         # TODO: BELOW ARE DUMMY VALUES, FIX IT!
         n = 1000
@@ -992,17 +497,17 @@ if __name__ == '__main__':
         u2 = 5
         series1 = u1 + np.random.randn(n)
         series2 = u2 + np.random.randn(n)
-        plot_metered_vs_simulated_energies(series1, series2, bins=20)
+        # plot_metered_vs_simulated_energies(series1, series2, bins=20)
         print(f'** Illustration of the results by calibrated parameters is over *')
     else:
         # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
         calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum, alpha=5,
-                    beta=90, final_samples=100, discrete=lb.sample_nbr, all_plots=True, approach=1)
+                    beta=90, final_samples=10, discrete=lb.sample_nbr, all_plots=True, approach=1)
 
         # Prior presentation of real samples for selected parameters
         if lb.SAMPLE_TYPE:
             combinations, middle_points = lb.all_combinations(lb.Bounds, lb.VarName2Change, lb.sample_nbr)
-            plot_combinations(lb.VarName2Change, lb.Bounds, combinations, middle_points, lb.sample_nbr)
+            lp.plot_combinations(lb.VarName2Change, lb.Bounds, combinations, middle_points, lb.sample_nbr)
 
         print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
               f" {round(((time.time() - start_time) / 60), 2)}min!")
