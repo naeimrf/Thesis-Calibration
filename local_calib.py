@@ -1,7 +1,9 @@
-import os, time, pickle
-import local_builder as lb
+import time, pickle, glob, shutil, json
+from local_setup import *
+import local_setup as ls
 import local_utility as lu
 import local_plots as lp
+from local_builder import LocalBuilder
 import numpy as np, seaborn as sns, pandas as pd
 import matplotlib.pyplot as plt
 import math, random
@@ -9,17 +11,22 @@ from scipy import stats, linalg
 from SALib.sample import latin
 
 start_time = time.time()
-test_path = os.path.join(os.getcwd(), lb.CaseName)
+test_path = os.path.join(os.getcwd(), CaseName)
 
 # 'Sim_Results' is added with respect to LaunchSim.py line 27
 res_path = test_path + "/Sim_Results"
 # Change the current working directory to the result folder
-os.chdir(test_path)
+if not RECURSIVE_CALIBRATION:
+    os.chdir(test_path)
 
 
 def compare_results(buildings, simulations, measurements, area,
                     alpha=5, per_building=False, all_buildings=True, plots=True):
-    # prepare simulation results to compare - - -
+    """
+    This method compares measurements and EPC values with respect to heating and electric load!
+    The method returns total energy both for simulation and measurement, their difference in terms of error
+    which is an absolute value and the list of acceptable buildings with an error value lower than alpha value.
+    """
     total_sim_result = lu.get_simulation_runs(buildings, simulations)
 
     # - - - - - - - - - - - - - - - -
@@ -73,7 +80,7 @@ def get_correlation_spearmanr(x, y, **kwds):
                 color='white' if lightness < 0.7 else 'black', size=9)  # , ha='center', va='center'
 
 
-def make_joint_distribution(buildings, acceptable, discrete, plot=True):
+def make_joint_distribution(buildings, acceptable, res_path, discrete, plot=True):
     print(f'\t- The start of Joint distribution method ...')
     os.chdir(res_path)
     accepted_ranges = {'Buildings': []}
@@ -84,7 +91,7 @@ def make_joint_distribution(buildings, acceptable, discrete, plot=True):
                 case = pickle.load(handle)
             case_BuildDB = case['BuildDB']
 
-            for param in lb.VarName2Change:
+            for param in VarName2Change:
                 if param not in accepted_ranges.keys():
                     accepted_ranges[param] = []
 
@@ -194,16 +201,17 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
 
         fig = plt.gcf()
         fig.canvas.set_window_title(
-            "Pairwise plots of generated samples from covariance matrix of calibrated parameters")
+            f"Pairwise plots of {nbr_samples} generated samples from covariance matrix of calibrated parameters")
         plt.show()
 
     tmp = np.array(y_transformed[0]).reshape((-1, 1))  # TRANSPOSE TO COLUMN FORMAT
-    for i in range(len(y_transformed)-1):
-        col_tmp = (y_transformed[i+1]).reshape(-1, 1)
+    for i in range(len(y_transformed) - 1):
+        col_tmp = (y_transformed[i + 1]).reshape(-1, 1)
         tmp = np.concatenate((tmp, col_tmp), axis=1)
 
     y_transformed = tmp
-    print(f'\t+ Generating calibrated samples from correlated parameters is done in {round(time.time()-mrfc_time, 2)}s.')
+    print(
+        f'\t+ Generating calibrated samples from correlated parameters is done in {round(time.time() - mrfc_time, 2)}s.')
     return y_transformed
 
 
@@ -238,7 +246,7 @@ def fit_best_distro(calib_params, nbr_samples, nbr_match, Danoe=True, plot=True)
         for skew in skewness:
             num_bins.append(round(1 + math.log(n, 2) + math.log(1 + abs(skew) / sigma_g1, 2)))
     else:
-        # predefined number of bins for each parameter in local_builder
+        # predefined number of bins for each parameter in local_setup
         num_bins = [nbr_samples] * len(calib_params.columns)
 
     # Calculate Histogram
@@ -348,8 +356,8 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
             salib_samples[:, i] > bound[1], salib_samples[:, i] < bound[0]))])
 
     salib_samples = np.array((tmp[0][:nbr_samples])).reshape((-1, 1))  # TRANSPOSE TO COLUMN FORMAT
-    for i in range(len(tmp)-1):
-        col_tmp = (tmp[i+1][:nbr_samples]).reshape(-1, 1)
+    for i in range(len(tmp) - 1):
+        col_tmp = (tmp[i + 1][:nbr_samples]).reshape(-1, 1)
         salib_samples = np.concatenate((salib_samples, col_tmp), axis=1)
 
     print(f'\t+ Generating calibrated samples from best distribution is done in {round(time.time() - mrfc_tme, 2)}s.')
@@ -376,6 +384,28 @@ def make_random_from_continuous(distro_dict, bounds, nbr_samples, plot):
     return salib_samples
 
 
+def test_of_assumption_beta(buildings, acceptable, beta):
+    unexplained_buildings = []
+    ratio = 0
+    for b in buildings:
+        if len(acceptable[b]) >= 1:
+            ratio += 1
+        else:
+            unexplained_buildings.append(b)
+
+    percentage = (ratio / len(buildings)) * 100
+    if percentage > beta:
+        if not RECURSIVE_CALIBRATION:
+            print(f"\t-> β qualification satisfied with {round(percentage, 2)}%.")
+        return False, []
+    else:
+        if not RECURSIVE_CALIBRATION:
+            print(f"\t-> ATTENTION: only {round(percentage, 2)}% simulations of buildings matched measurements!\n"
+                  # f"\t-> Model revision, choice of θ parameters or more number of simulations is needed!\n"
+                  f"\t\t-> List of unexplained buildings: {unexplained_buildings}")
+        return True, unexplained_buildings
+
+
 def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings, final_samples=100,
                                alpha=5, beta=85, discrete=5, all_plots=True, approach=1):
     """
@@ -397,10 +427,10 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
     if not all_plots:
         print("** THE PLOT OPTION IS OFF, CHANGE TO 'TRUE' TO SEE THE RESULTS! **")
     # * ALGORITHM STEP1: PARAMETER DEFINITION * * * * * * * * * * /
-    _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(lb.VarName2Change, 0, res_path)
+    _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(VarName2Change, 0, res_path)
     if all_plots:
         lp.plot_prior_distributions(params, params_ranges, buildings, discrete,
-                                 per_building=False, SALib=lb.SAMPLE_TYPE, LHC=params_cat)
+                                    per_building=False, SALib=SAMPLE_TYPE, LHC=params_cat)
 
     # * ALGORITHM STEP2: PARAMETRIC SIMULATION * * * * * * * * * * /
     print(f"\t-> {nbr_sim_uncalib} random simulations out of {discrete ** (len(params))} possible combinations!")
@@ -412,53 +442,39 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
                         per_building=True, all_buildings=True, plots=all_plots)
 
     # * ALGORITHM STEP4: TEST OF ASSUMPTIONS (β) * * * * * * * * * * /
-    unexplained_buildings = []
-    ratio = 0
-    for b in buildings:
-        if len(acceptable[b]) >= 1:
-            ratio += 1
-        else:
-            unexplained_buildings.append(b)
-
-    percentage = (ratio / len(buildings)) * 100
-    if percentage > beta:
-        print(f"\t-> β qualification satisfied with {percentage}%.")
-    else:
-        print(f"-> ATTENTION: only {percentage}% simulations of buildings matched measurements!\n"
-              f"-> Model revision, choice of θ parameters or more number of simulations is needed!\n"
-              f"-> List of unexplained buildings: {unexplained_buildings}")
+    low_beta, _ = test_of_assumption_beta(buildings, acceptable, beta)
+    if low_beta:
         return 1
 
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
-    calib_params = make_joint_distribution(buildings, acceptable, discrete, plot=all_plots)
+    calib_params = make_joint_distribution(buildings, acceptable, res_path, discrete, plot=all_plots)
 
     # Plot below provides more insight to possible correlations of parameters /
     # if all_plots: # FIXME: AN EXTRA PLOT, CORRELATION OF PARAMETERS, UNCOMMENT TO SEE.
     #    plot_joint_distributions(calib_params, discrete)
 
-    calib_frequencies = lp.plot_calibrated_parameters(calib_params, lb.Bounds, discrete, plot=all_plots)
+    calib_frequencies = lp.plot_calibrated_parameters(calib_params, Bounds, discrete, NbRuns, alpha, plot=all_plots)
 
     # * ALGORITHM STEP6: RANDOM SAMPLED SIMULATIONS * * * * * * * * * * /
     # Save and send the result back to local_builder for simulations with θ'
     smpl = final_samples  # The number of final samples based on calibrated parameters
 
     if approach == 1:
-        theta_prime = make_random_from_correlated(calib_params, lb.VarName2Change, smpl,
-                                                   cholesky=True, plots=all_plots)
+        theta_prime = make_random_from_correlated(calib_params, VarName2Change, smpl,
+                                                  cholesky=True, plots=all_plots)
         np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
 
     elif approach == 2:
-        best_distros = fit_best_distro(calib_params, lb.sample_nbr, 3, Danoe=False, plot=all_plots)
-        theta_prime = make_random_from_continuous(best_distros, lb.Bounds, smpl, plot=all_plots)
+        best_distros = fit_best_distro(calib_params, sample_nbr, 3, Danoe=False, plot=all_plots)
+        theta_prime = make_random_from_continuous(best_distros, Bounds, smpl, plot=all_plots)
         np.savetxt("theta_prime.csv", theta_prime, delimiter=",")
 
-    print(f'\t-> Calibrated parameters are saved as "theta_prime.csv" file in:\n\t{res_path}')
+    print(f'\t-> {smpl} calibrated parameters are saved as "theta_prime.csv" file in:\n\t{res_path}')
     print(f'+ Calibration method is over!')
     return 0
 
 
 def return_best_combination_for_each_building(path, params_build, errors, param_names):
-
     best_simulations = {}
     building_ids = errors.keys()
     for id in building_ids:
@@ -470,7 +486,7 @@ def return_best_combination_for_each_building(path, params_build, errors, param_
         best_combinations.update({id: params_build[id][version]})
 
     df = pd.DataFrame(best_combinations, index=param_names)
-    print(f'\t-> Best combinations of probabilistic parameters for buildings:\n{df}')
+    print(f'\t-> Best combination of probabilistic parameters for buildings:\n{df}')
 
     df.to_csv('best_combinations.csv', sep=',', index=True)
 
@@ -479,35 +495,129 @@ def return_best_combination_for_each_building(path, params_build, errors, param_
     return df
 
 
-# CALIBRATION RUN * * * * * * * *
-if __name__ == '__main__':
-    if lb.RUN_UNSEEN_BUILDINGS_WITH_CALIBRATED_PARAMETERS:
-        print(f'* Simulation results for buildings: {lb.BuildNum} with calibrated parameters *')
-        _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(lb.VarName2Change, 0, res_path)
+def recursive_calibration(buildings, CaseName, alpha=5, beta=85, iterations=2):
+    """
+    This function works if RECURSIVE_CALIBRATION is set to 'True'
+    It is an attempt to find calibrated parameters with less computational resources.
+    """
+    parent_folder = os.getcwd()
+    if os.path.exists('./CSV/'):
+        files = glob.glob('./CSV/*')
+        for f in files:
+            os.remove(f)
+        os.rmdir('./CSV/')
+        print("* Previous CSV file deleted *")
+    os.mkdir('./CSV/')
+
+    iterations_best_results = {}
+    for iteration in range(iterations):
+
+        builder = LocalBuilder()
+        if iteration > 0:
+            # First simulation run to get uncalibrated parameters
+            # After the first run we read calibrated parameters from previous run
+            os.chdir(parent_folder)
+            ls.CALIBRATE_WITH_CALIBRATED_PARAMETERS = True
+        builder.run(CaseName)
+        os.chdir(test_path)
+
+        _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(VarName2Change, 0, res_path)
         sim_data, model_area = lu.read_simulation_files(res_path)
         total_sim_results, _, errors, acceptable = \
-            compare_results(lb.BuildNum, sim_data, total_epc, model_area, alpha=7,
-                            per_building=True, all_buildings=True, plots=True)
+            compare_results(buildings, sim_data, total_epc, model_area, alpha=alpha,
+                            per_building=True, all_buildings=True, plots=False)
+        for_if = for_elif = 1
+        while True:
+            low_beta, unexplained_buildings = test_of_assumption_beta(buildings, acceptable, beta)
 
-        _ = return_best_combination_for_each_building(res_path, params_build, errors, lb.VarName2Change)
+            # we need at least p data points in p dimensions where the dimension is the number of parameters
+            # print(f"\t-> Acceptable number of simulations: {sum(len(v) for v in acceptable.values())}, low_β: {low_beta}")
+            if low_beta:
+                alpha_tmp = alpha + for_if
 
-        # TODO: BELOW ARE DUMMY VALUES, FIX IT!
-        n = 1000
-        u1 = 5
-        u2 = 5
-        series1 = u1 + np.random.randn(n)
-        series2 = u2 + np.random.randn(n)
-        # plot_metered_vs_simulated_energies(series1, series2, bins=20)
-        print(f'** Illustration of the results by calibrated parameters is over *')
+                for nbr in buildings:
+                    if nbr in unexplained_buildings:
+                        temp = dict((k1, v1) for k1, v1 in errors[nbr].items() if v1 <= alpha_tmp)
+                        if temp:
+                            print(f"\t-> Alpha value for building {nbr} sets temporarily to:{alpha_tmp}")
+                            acceptable.update({nbr: temp})
+
+                for_if += 1
+
+            elif sum(len(v) for v in acceptable.values()) < len(VarName2Change) * 3:
+                alpha_tmp = alpha + for_elif
+                for nbr in buildings:
+                    temp = dict((k1, v1) for k1, v1 in errors[nbr].items() if v1 <= alpha_tmp)
+                    if temp:
+                        acceptable.update({nbr: temp})
+                for_elif += 1
+            else:
+                break
+
+        print(f">> {acceptable}")
+        iterations_best_results[iteration] = {}
+        for key, value in acceptable.items():
+            iterations_best_results[iteration].update({key: min(acceptable[key].values())})
+
+        calib_params = make_joint_distribution(buildings, acceptable, res_path, 5, plot=False)
+        theta_prime = make_random_from_correlated(calib_params, VarName2Change, NbRuns,
+                                                  cholesky=True, plots=False)
+
+        csv_file = "theta_prime.csv"
+        path_to_save = parent_folder + "/CSV/" + csv_file
+        if os.path.exists(path_to_save):
+            os.remove(path_to_save)
+
+        np.savetxt(path_to_save, theta_prime, delimiter=",")
+        print(f'\t-> {iterations}: {NbRuns} calibrated parameters are saved as {csv_file} in:\n\t{path_to_save}')
+
+        converge = []
+        for value in iterations_best_results.values():
+            converge.append(list(value.values()))
+        converge = np.array([j for sub in converge for j in sub])
+        if all(converge < alpha):
+            with open('converge.txt', 'w') as file:
+                file.write(json.dumps(iterations_best_results)) # use `json.loads` to do the reverse
+            return iterations_best_results
+
+        os.chdir(parent_folder)
+        if os.path.exists(CaseName):
+            shutil.rmtree(parent_folder + "/" + CaseName)
+
+
+# CALIBRATION RUN * * * * * * * *
+if __name__ == '__main__':
+    if RECURSIVE_CALIBRATION:
+        best_results = recursive_calibration(BuildNum, CaseName, alpha=15, beta=85, iterations=3)
+        lp.plot_recursive_improvement(best_results)
     else:
-        # plot_time = 5  # plots terminate in a plot_time by a multiplayer!
-        calibrate_uncertain_params(lb.VarName2Change, lb.Bounds, lb.NbRuns, lb.BuildNum, alpha=5,
-                    beta=90, final_samples=10, discrete=lb.sample_nbr, all_plots=True, approach=1)
+        if CALIBRATE_WITH_CALIBRATED_PARAMETERS:
+            print(f'* Simulations for buildings: {BuildNum} with calibrated parameters *')
+            _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(VarName2Change, 0, res_path)
+            sim_data, model_area = lu.read_simulation_files(res_path)
+            total_sim_results, _, errors, acceptable = \
+                compare_results(BuildNum, sim_data, total_epc, model_area, alpha=1,
+                                per_building=True, all_buildings=True, plots=True)
+            _ = return_best_combination_for_each_building(res_path, params_build, errors, VarName2Change)
 
-        # Prior presentation of real samples for selected parameters
-        if lb.SAMPLE_TYPE:
-            combinations, middle_points = lb.all_combinations(lb.Bounds, lb.VarName2Change, lb.sample_nbr)
-            lp.plot_combinations(lb.VarName2Change, lb.Bounds, combinations, middle_points, lb.sample_nbr)
+            # TODO: BELOW ARE DUMMY VALUES, FIX IT!
+            n = 1000
+            u1 = 5
+            u2 = 5
+            series1 = u1 + np.random.randn(n)
+            series2 = u2 + np.random.randn(n)
+            # lp.plot_metered_vs_simulated_energies(series1, series2, bins=20)
+            print(f'** Illustration of the results by calibrated parameters is over *')
+        else:
+            # alpha=5%, based on ASHRAE Guideline 14–2002
+            calibrate_uncertain_params(VarName2Change, Bounds, NbRuns, BuildNum, alpha=5,
+                                       beta=90, final_samples=100, discrete=sample_nbr, all_plots=True, approach=1)
 
-        print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
-              f" {round(((time.time() - start_time) / 60), 2)}min!")
+            print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
+                  f" {round(((time.time() - start_time) / 60), 2)}min!")
+
+            # ** EXPERIMENTAL CODE **
+            # Prior presentation of real samples for selected parameters
+            # if SAMPLE_TYPE:
+            #    combinations, middle_points = lu.all_combinations(Bounds, VarName2Change, sample_nbr)
+            #    lp.plot_combinations(VarName2Change, Bounds, combinations, middle_points, sample_nbr)

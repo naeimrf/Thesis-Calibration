@@ -1,22 +1,30 @@
 import os, time, pickle, copy
-import local_builder as lb
+import local_setup as setup
 import numpy as np
 from collections import Counter
-
+from skopt.space import Space
+from skopt.sampler import Lhs
+import pandas as pd
+from itertools import product
+from pathlib import Path
+import csv
 
 def my_print(*args):
+    """
+    A function to print the result of other methods in the console separately.
+    """
     print("- - - Function results - - -")
     for i in args:
         print(f'-> {i}')
     print("- - - Function Ends - - - - - - -")
 
 
-def get_file_names(BuildNum, NbRuns, path, alternative):
+def get_file_names(BuildNum, NbRuns, path, check=True):
     """
-    This method is to find or make simulation file names
-    alternative 0 -> based on generated input file names
-    alternative 1 -> based on existing simulation file names
-    This function also checks the existing number of files against the number of simulations asked by user!
+    This method is to generate input file names or read names from simulation files and it checks
+    missing simulation files (their existence against input files) if boolean check is True.
+    It works with pickle files in Sim_Results folder and its parent folder (main folder for each simulation)
+    and it returns a dictionary of input file names if there is no missing file!
     """
     if os.path.isfile(path + "/theta_prime.csv"):
         os.remove(path + "/theta_prime.csv")
@@ -26,45 +34,51 @@ def get_file_names(BuildNum, NbRuns, path, alternative):
         os.remove(path + "/best_combinations.csv")
         print("\t-> Previous 'best_combinations.csv' file is removed.")
 
-    # check the number of simulations in the result folder and produce their names
-    all_files = os.listdir(path)
-    if NbRuns * len(BuildNum) != len(all_files) / 2:
-        print(f"\t-> Something is WRONG, number of exiting files does not equal to 'BuildNum'!")
-        print(f'\t-> Parameters in local_builder should match with existing number of files in ForTest folder!')
-        print(f'\t-> Existing result pickle files:{len(all_files) / 2} != Simulations asked in builder.py:{NbRuns * len(BuildNum)}')
-        raise ValueError("Missing simulation files!")
+    # recreate simulation file names to extract energy results
+    input_dict = {}
+    for bld in BuildNum:
+        for i in range(setup.NbRuns):
+            if bld in input_dict:
+                value = input_dict[bld]
+                value.append('Building_' + str(bld) + 'v' + str(i) + ".pickle")
+            else:
+                input_dict[bld] = ['Building_' + str(bld) + 'v' + str(i) + ".pickle"]
+        # print(f'Synthetically created file names:\n{lst}')
 
-    lst = {}
-    if alternative:
-        # find simulation file names to extract energy results
-        # method 1
+    if check:
+        all_files = os.listdir(path)
+        res_dict = {}
+        # read simulation file names to extract energy results
         for file in all_files:
             if file.endswith('.pickle'):
                 for cn in BuildNum:
                     if str(cn) + 'v' in file:  # if file.find(cn):
-                        if cn in lst:
-                            value = lst[cn]
+                        if cn in res_dict:
+                            value = res_dict[cn]
                             value.append(file)
                         else:
-                            lst[cn] = [file]
+                            res_dict[cn] = [file]
         # print(f'Names retrieved from existing files:\n{lst}')
-    else:
-        # recreate simulation file names to extract energy results
-        # method 2
-        for bld in BuildNum:
-            for i in range(lb.NbRuns):
-                if bld in lst:
-                    value = lst[bld]
-                    value.append('Building_' + str(bld) + 'v' + str(i) + ".pickle")
-                else:
-                    lst[bld] = ['Building_' + str(bld) + 'v' + str(i) + ".pickle"]
-        # print(f'Synthetically created files:\n{lst}')
-    return lst
+        missing = {}
+        for building in BuildNum:
+            tmp = list(set(input_dict[building]) - set(res_dict[building]))
+            if tmp:
+                missing.update({building: tmp})
+
+        # check the number of simulations in the result folder and produce their names
+        if NbRuns * len(BuildNum) != len(all_files) / 2:
+            print(f'\t-> Missing simulation files: {missing}')
+            print(f'\t-> Parameters in local_builder should match with existing number of files in ForTest folder!')
+            print(f'\t-> Existing result pickle files:{len(all_files) / 2} != Simulations asked:{NbRuns * len(BuildNum)}')
+            raise ValueError("Missing simulation files!")
+        return res_dict
+
+    return input_dict
 
 
 def read_epc_values(params_list, surface_type, path):
     """
-    This method reads probabilistic input parameters and EPC values from pickle files in the RESULT folder!
+    This method reads the input parameters and EPC values from pickle files in the RESULT folder!
     Select surface_type equal to 1 to apply A_temp or 0 to apply EnergyPLus geometric area!!
 
     The stored input values in result pickle files retrieved in this function are:
@@ -78,7 +92,7 @@ def read_epc_values(params_list, surface_type, path):
     """
     read_time1 = time.time()
     print(f'\t- Reading of input files with pickle format started ...')
-    input_files = get_file_names(lb.BuildNum, lb.NbRuns, path, 1)
+    input_files = get_file_names(setup.BuildNum, setup.NbRuns, path, check=False)
     building_ids = input_files.keys()
 
     epc, area, total, total_per_area, enj_per = dict(), dict(), dict(), dict(), dict()
@@ -151,9 +165,13 @@ def read_epc_values(params_list, surface_type, path):
 
 
 def read_simulation_files(path):
+    """
+    This method reads result files (pickle format) and returns all the measures asked
+    in 'Output.txt' file for EnergyPlus to calculate.
+    """
     read_time2 = time.time()
     print(f'\t- Reading of result files with pickle format started ...')
-    result_files = get_file_names(lb.BuildNum, lb.NbRuns, path, 1)
+    result_files = get_file_names(setup.BuildNum, setup.NbRuns, path, check=True)
 
     os.chdir(path)  # change the working directory to result files!
 
@@ -213,7 +231,10 @@ def get_projected_freq(theoretical_xlabels, lpc_xlabels, groups):
 
 
 def get_simulation_runs(buildings, simulations):
-    # prepare simulation results to compare - - -
+    """
+    This function sums up all simulation results for electrical usage and
+    heating equivalent to purchased energy and returns a total annual consumption in kWh.
+    """
     heat_el_result = {}  # Hot water consumption is not included!
     total_sim_result = {}
 
@@ -229,9 +250,12 @@ def get_simulation_runs(buildings, simulations):
                 if '_Electric' in key:
                     heat_el_result[nbr][bn].append(value)  # Kwh
                     tmp += value
-                elif 'Ideal Loads Zone Total Heating' in key:
-                    heat_el_result[nbr][bn].append(value)
-                    tmp += value
+                # elif 'Ideal Loads Zone Total Heating' in key:
+                #    heat_el_result[nbr][bn].append(value)
+                #    tmp += value
+                elif 'Ideal Loads Supply Air Total Heating Energy' in key:
+                   heat_el_result[nbr][bn].append(value)
+                   tmp += value
             total_sim_result[nbr].update({bn: tmp})
     return total_sim_result
 
@@ -248,3 +272,58 @@ def second_largest(numbers):
                 m2 = x
     return m2 if count >= 2 else None
 
+
+def all_combinations(bounds, var_names, samples):
+    """
+    This function takes probabilistic variable bounds, number of discritization and variable names
+    and returns a list of lists for all combinations.
+    """
+    #  converting list of lists to list of tuples suitable for Space function in skopt!
+    tmp = []
+    for bound in bounds:
+        tmp.append([float(b) for b in bound])
+    bounds = list(map(tuple, tmp))
+    space = Space(bounds)
+
+    # LHC with centered option to get the middle points
+    lhs = Lhs(lhs_type="centered", criterion=None)
+    centered = lhs.generate(space.dimensions, samples)
+
+    # centered is a list of lists where each list has one value for each probabilistic variable
+    # convert to dataframe to split columns into separated variables
+    df = pd.DataFrame(centered, columns=var_names)
+    inverted_list = []
+    params = df.columns.values.tolist()
+    for param in params:
+        inverted_list.append(df[param].tolist())
+
+    # producing all combinations by product from itertools
+    # the result of product function is a list of tuples
+    combinations = list(product(*inverted_list))
+    tmp = []
+    for comb in combinations:
+        tmp.append(list(comb))
+    combinations = tmp
+
+    return combinations, inverted_list
+
+
+def read_calibrated_params(path, folder, recursive=False):
+    # 'Sim_Results' is added with respect to LaunchSim.py line 27
+    if recursive:
+        path = str(Path(path).parent)
+        csv_place = path + "/CSV"
+    else:
+        path = str(Path(path).parent)
+        csv_place = path + "/" + folder + "/Sim_Results"
+
+    print(f'CSV location:{csv_place}')
+    if os.path.isfile(csv_place + "/theta_prime.csv"):
+        with open(csv_place + "/theta_prime.csv", 'r') as csv_file:
+            params = list(csv.reader(csv_file))
+            params = np.array(params).astype("float")
+        return params
+    else:
+        print(f'There is no calibrated parameter file at:{csv_place}')
+        print(f'Run local_calib.py first to calibrate parameters!')
+        raise ValueError("Missing Calibrated CSV file!")

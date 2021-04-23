@@ -1,4 +1,7 @@
-from local_calib import *
+import os, time, numpy as np, pandas as pd
+import local_setup as setup
+import local_utility as lu
+import local_builder as lb
 import matplotlib.pyplot as plt
 from SALib.analyze import morris, rbd_fast
 from SALib.plotting.morris import horizontal_bar_plot, covariance_plot, sample_histograms
@@ -12,7 +15,7 @@ start_time = time.time()
 def prepare_sensitivity_requirements(name, bounds, inputs, outputs):
     """
     This method retrieves random-numbers generated for simulation cases as well as the results
-    from simulation runs. The return values are ready to pass sensitivity analysis methods in SALib.
+    from simulation runs. The return values are ready to pass to sensitivity analysis methods in SALib.
     # https://salib.readthedocs.io/en/latest/
     # https://stackoverflow.com/questions/41045699/performing-a-sensitivity-analysis-with-python
     """
@@ -30,19 +33,19 @@ def prepare_sensitivity_requirements(name, bounds, inputs, outputs):
     return problem, x, y
 
 
-def run_morris_analysis(problem, x, y, built_in_plot=True):
+def run_morris_analysis(problem, x, y, built_in_plots=True):
     """
     Results are:
     mu - the mean elementary effect
     mu_star - the absolute of the mean elementary effect
     sigma - the standard deviation of the elementary effect
     mu_star_conf - the bootstrapped confidence interval
-    https://salib.readthedocs.io/en/latest/_modules/SALib/analyze/morris.html
     """
     print(f'\t- The start of Morris sensitivity analysis method ...')
-    Si = morris.analyze(problem, x, y, print_to_console=True, num_levels=10)
+    # https://salib.readthedocs.io/en/latest/_modules/SALib/analyze/morris.html
+    Si = morris.analyze(problem, x, y, conf_level=0.95, print_to_console=True, num_levels=4, num_resamples=1000)
 
-    if built_in_plot:
+    if built_in_plots:
         # ‘xx-small’, ‘x-small’, ‘small’, ‘medium’, ‘large’, ‘x-large’, ‘xx-large’
         params = {'legend.fontsize': 'large',
                   'figure.figsize': (11, 4),
@@ -74,7 +77,7 @@ def run_morris_analysis(problem, x, y, built_in_plot=True):
     ax3.set_yticks(y_pos)
     ax3.set_yticklabels(labels, size=9)
     ax3.invert_yaxis()  # labels read top-to-bottom
-    ax3.set_xlabel('Sensitivity score')
+    ax3.set_xlabel('Sensitivity Index')
 
     fig3.canvas.set_window_title(f'Morris with the primary effect of the input factors (μ)')
     plt.tight_layout()
@@ -84,7 +87,7 @@ def run_morris_analysis(problem, x, y, built_in_plot=True):
     df = pd.DataFrame(Si, index=labels)
     df.plot(kind='bar', alpha=0.75, rot=0)
     plt.xlabel("Parameters")
-    plt.ylabel("Sensitivity score of Morris method")
+    plt.ylabel("Sensitivity Index")
     fig3 = plt.gcf()
     fig3.canvas.set_window_title(f'Morris method with all measures')
     plt.tight_layout()
@@ -122,7 +125,7 @@ def run_rbd_fast_analysis(problem, x, y):
     ax1.set_yticks(y_pos)
     ax1.set_yticklabels(labels, size=9)
     ax1.invert_yaxis()  # labels read top-to-bottom
-    ax1.set_xlabel('Sensitivity score')
+    ax1.set_xlabel('Sensitivity Index')
     # ax1.set_title('RDB')
 
     print(f'\t+ RDB FAST sensitivity analysis method is over!')
@@ -133,21 +136,28 @@ def run_rbd_fast_analysis(problem, x, y):
 
 # SENSITIVITY RUN * * * * * * * *
 print(f"* Sensitivity analysis started ...")
+test_path = os.path.join(os.getcwd(), setup.CaseName)
+os.chdir(test_path)
 print(f'test_path:{test_path}')
-res_path = os.getcwd() + "/Sim_Results"
+res_path = test_path + "/Sim_Results"
 
-_, _, _, _, _, _, params_build = lu.read_epc_values(lb.VarName2Change, 0, res_path)
+
+_, _, _, _, _, _, params_build = lu.read_epc_values(setup.VarName2Change, 0, res_path)
 sim_data, _ = lu.read_simulation_files(res_path)
-total_sim_results = lu.get_simulation_runs(lb.BuildNum, sim_data)
-problem, x, y = prepare_sensitivity_requirements(lb.VarName2Change, lb.Bounds, params_build, total_sim_results)
-run_morris_analysis(problem, x, y, built_in_plot=False)
+total_sim_results = lu.get_simulation_runs(setup.BuildNum, sim_data)
+problem, x, y = prepare_sensitivity_requirements(setup.VarName2Change, setup.Bounds, params_build, total_sim_results)
+try:
+    run_morris_analysis(problem, x, y, built_in_plots=False)
+except:
+    msg = "\t-> Number of samples in model output file must be a multiple of (D+1),\n" \
+          "\t   where D is the number of parameters (or groups) in your parameter file."
+    print(f'\t-> Morris requirements/restrictions:\n{msg}')
 run_rbd_fast_analysis(problem, x, y)
 
-print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
+print(f"* Execution time: {round((time.time() - start_time), 2)}s /"
       f" {round(((time.time() - start_time) / 60), 2)}min!")
 
-
-# COMPARISON RUN * * * * * * * *
+# ** EXPERIMENTAL CODE **
 space = Space([(0.15, float(0.35))])
-centered, salib = lp.generate_randomness(space.dimensions, lb.sample_nbr, space)
-lp.compare2_methods(centered, salib, space.dimensions, lb.sample_nbr, 'Centered-LHC', 'SALib-LHC')
+# centered, salib = lp.generate_randomness(space.dimensions, setup.sample_nbr, space)
+# lp.compare2_methods(centered, salib, space.dimensions, setup.sample_nbr, 'Centered-LHC', 'SALib-LHC')

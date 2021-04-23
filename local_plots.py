@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np, seaborn as sns, pandas as pd
 import local_utility as lu
-import local_builder as lb
+from local_setup import *
 import os, statistics
 from skopt.sampler import *
 from scipy import stats
@@ -33,11 +33,7 @@ def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete,
     plt.ylim(0, np.max(np.array(lpc_freq)) * 1.1)  # set y range 10% more than maximum value of frequencies
     plt.yticks(size=7)
     fig.canvas.set_window_title(message)
-
     plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time * 3)  # seconds
-    # plt.close()
 
 
 def plot_prior_distributions(params, ranges, buildings, discrete, per_building=True, SALib=True, **kwargs):
@@ -84,7 +80,7 @@ def plot_prior_distributions(params, ranges, buildings, discrete, per_building=T
     print(f'\t+ plot_prior_distributions method is over!')
 
 
-def plot_calibrated_parameters(data_frame, ranges, discrete, plot=True):
+def plot_calibrated_parameters(data_frame, ranges, discrete, samples_nbr, alpha, plot=True):
     if 'Buildings' in data_frame.columns:
         del data_frame['Buildings']
 
@@ -104,7 +100,7 @@ def plot_calibrated_parameters(data_frame, ranges, discrete, plot=True):
         lhc_xlabels.append(tmp)
 
     theoretical_freq = [[1 / discrete] * discrete] * groups
-    message = f'Prior and posterior marginal distributions for calibrated parameters'
+    message = f'Prior and posterior (calibrated) distributions, simulations:{samples_nbr}, alpha:{alpha}'
     lhc_freq = lu.get_projected_freq(theoretical_xlabels, lhc_xlabels, groups)
     if plot:
         plot_side_by_side(theoretical_freq, theoretical_xlabels, lhc_freq, discrete, params, message, color='green')
@@ -135,9 +131,6 @@ def passed_cases_one_building(error_dict, nbr, alpha):
                                 f'of tests with error lower than {alpha}%')
     plt.tight_layout()
     plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time)
-    # plt.close()
 
 
 def passed_cases_all_buildings(error_dict, alpha):
@@ -164,7 +157,7 @@ def passed_cases_all_buildings(error_dict, alpha):
     for id in building_ids:
         min_value = min_error_per_building[id][0]
         min_idx = min_error_per_building[id][1]
-        color = 'g' if min_value <= alpha else 'r'
+        color = 'k' if min_value <= alpha else 'r'
         plt.annotate((str(round(min_value, 2))+"%", id), (min_idx, min_value),
                      xytext=(0, 10), textcoords="offset points", ha='center', color=color)
 
@@ -176,9 +169,6 @@ def passed_cases_all_buildings(error_dict, alpha):
                                 f'of tests with error lower than {alpha}%')
     plt.tight_layout()
     plt.show()
-    # plt.show(block=False)
-    # plt.pause(plot_time*2)
-    # plt.close()
 
 
 def plot_metered_vs_simulated_energies(metered, simulated, bins=20):
@@ -259,7 +249,7 @@ def plot_joint_distributions(data_frame, discrete):
     i = 0
     for key in graph:
         graph[key] = sns.JointGrid(data=data_frame, x=header[0], y=header[i + 1], space=0)
-        graph[key].plot_joint(sns.kdeplot, fill=True, clip=((lb.Bounds[0]), (lb.Bounds[i + 1])),
+        graph[key].plot_joint(sns.kdeplot, fill=True, clip=((Bounds[0]), (Bounds[i + 1])),
                               thresh=0, levels=discrete, cmap=cmap).plot_joint(sns.scatterplot)
         graph[key].plot_marginals(sns.histplot, color="gray", alpha=1, bins=5)
         graph[key].savefig(f'{key}.png')
@@ -413,4 +403,26 @@ def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
     plt.legend()
     fig = plt.gcf()
     fig.canvas.set_window_title('Illustration of samples for two Quasi-Random Number Generators')
+    plt.show()
+
+
+def plot_recursive_improvement(result_dict):
+    iterations = result_dict.keys()
+    order_dict = {}
+    for b in BuildNum:
+        tmp = []
+        for value in result_dict.values():
+            tmp.append(value[b])
+            order_dict.update({b: tmp})
+    order_dict, len(order_dict)
+
+    colors = list("rgbcmyk")
+    x = iterations
+    for y in order_dict.values():
+        plt.plot(x, y, color=colors.pop(), ls="--", marker="x")
+
+    plt.suptitle('Building error reduction with recursive calibration')
+    plt.xlabel('Number of iterations')
+    plt.ylabel('Error')
+    plt.legend(order_dict.keys())
     plt.show()
