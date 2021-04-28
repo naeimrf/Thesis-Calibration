@@ -423,7 +423,7 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
     'final_samples' -> number of random samples from joint distribution
     """
 
-    print(f'- The start of annual calibration method ...')
+    print(f'- The start of annual calibration method with alpha: {alpha} ...')
     if not all_plots:
         print("** THE PLOT OPTION IS OFF, CHANGE TO 'TRUE' TO SEE THE RESULTS! **")
     # * ALGORITHM STEP1: PARAMETER DEFINITION * * * * * * * * * * /
@@ -448,6 +448,9 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
 
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
     calib_params = make_joint_distribution(buildings, acceptable, res_path, discrete, plot=all_plots)
+
+    if all_plots:
+        lp.make_t_SNE_plot(calib_params)
 
     # Plot below provides more insight to possible correlations of parameters /
     # if all_plots: # FIXME: AN EXTRA PLOT, CORRELATION OF PARAMETERS, UNCOMMENT TO SEE.
@@ -544,7 +547,7 @@ def recursive_calibration(buildings, CaseName, alpha=5, beta=85, iterations=2):
 
                 for_if += 1
 
-            elif sum(len(v) for v in acceptable.values()) < len(VarName2Change) * 3:
+            elif sum(len(v) for v in acceptable.values()) < len(VarName2Change):
                 alpha_tmp = alpha + for_elif
                 for nbr in buildings:
                     temp = dict((k1, v1) for k1, v1 in errors[nbr].items() if v1 <= alpha_tmp)
@@ -596,8 +599,8 @@ if __name__ == '__main__':
             _, a_temp, total_epc, _, _, params_cat, params_build = lu.read_epc_values(VarName2Change, 0, res_path)
             sim_data, model_area = lu.read_simulation_files(res_path)
             total_sim_results, _, errors, acceptable = \
-                compare_results(BuildNum, sim_data, total_epc, model_area, alpha=1,
-                                per_building=True, all_buildings=True, plots=True)
+                compare_results(BuildNum, sim_data, total_epc, model_area, alpha=5,
+                                per_building=False, all_buildings=True, plots=True)
             _ = return_best_combination_for_each_building(res_path, params_build, errors, VarName2Change)
 
             # TODO: BELOW ARE DUMMY VALUES, FIX IT!
@@ -611,7 +614,7 @@ if __name__ == '__main__':
         else:
             # alpha=5%, based on ASHRAE Guideline 14–2002
             calibrate_uncertain_params(VarName2Change, Bounds, NbRuns, BuildNum, alpha=5,
-                                       beta=90, final_samples=100, discrete=sample_nbr, all_plots=True, approach=1)
+                                       beta=90, final_samples=100, discrete=sample_nbr, all_plots=False, approach=1)
 
             print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
                   f" {round(((time.time() - start_time) / 60), 2)}min!")

@@ -7,6 +7,10 @@ from skopt.sampler import *
 from scipy import stats
 from skopt.space import Space
 from SALib.sample import latin
+from sklearn.manifold import TSNE
+from matplotlib.ticker import NullFormatter
+import matplotlib.cm as cmap
+import time
 
 
 def plot_side_by_side(theoretical_freq, theoretical_xlabels, lpc_freq, discrete, params, message, color):
@@ -426,3 +430,50 @@ def plot_recursive_improvement(result_dict):
     plt.ylabel('Error')
     plt.legend(order_dict.keys())
     plt.show()
+
+
+
+def make_t_SNE_plot(calib_params):
+    # The method is inspired by Narine Kokhlikyan's code in scikit-learn website:
+    # https://scikit-learn.org/stable/auto_examples/manifold/plot_t_sne_perplexity.html#sphx-glr-auto-examples-manifold-plot-t-sne-perplexity-py
+    print(f"\t- The start of t_SNE_plot method ...")
+    n_samples = len(calib_params.index)
+    target = calib_params["Buildings"].to_numpy()
+    df_tmp = calib_params.drop('Buildings', 1)  # 0 for rows and 1 for columns
+    parameters = len(df_tmp.columns)
+
+    print(f"\t-> Calibration in buildings: {set(target)} consists of {n_samples} combinations of {parameters} parameters")
+    perplexities = (5, 30, 50, 100)
+    learning_rates = (100, 200, 400)
+    # row: learning_rates, column: perplexities, figure-size
+    (fig, subplots) = plt.subplots(len(learning_rates), len(perplexities),
+                                   sharex='all', sharey='all', figsize=(9, 5))
+    t00 = time.time()
+    for i, perplexity in enumerate(perplexities):
+        for j, learning_rate in enumerate(learning_rates):
+            ax = subplots[j][i]
+            t0 = time.time()
+            # fit and transform with TSNE
+            t_sne = TSNE(n_components=2, perplexity=perplexity, method='exact',
+                         learning_rate=learning_rate, n_iter=5000, verbose=0)
+            # project the data in 2D
+            y = t_sne.fit_transform(df_tmp)
+            if i == 0:
+                ax.set_ylabel(learning_rate, rotation=90, size='small')
+            if j == len(learning_rates) - 1:
+                ax.set_xlabel(perplexity, rotation=0, size='small')
+
+            for t in target:
+                ax.scatter(y[target == t, 0], y[target == t, 1], cmap=cmap, s=5)
+                ax.xaxis.set_major_formatter(NullFormatter())
+                ax.yaxis.set_major_formatter(NullFormatter())
+
+            t1 = time.time()
+            print(f"\t-> t_SNE plot, perplexity:{perplexity} and learning_rate:"
+                  f"{learning_rate} in {round((t1-t0), 2)}s")
+
+    t11 = time.time()
+    fig.canvas.set_window_title('t-SNE plots for calibrated parameters, columns: perplexities, rows: learning_rates')
+    plt.tight_layout()
+    plt.show()
+    print(f"\t+ The t_SNE_plot method is over in {round((t00-t11), 2)}s!")
