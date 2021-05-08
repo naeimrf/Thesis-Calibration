@@ -146,7 +146,7 @@ sim_data, _ = lu.read_simulation_files(res_path)
 total_sim_results = lu.get_simulation_runs(setup.BuildNum, sim_data)
 problem, x, y = prepare_sensitivity_requirements(setup.VarName2Change, setup.Bounds, params_build, total_sim_results)
 try:
-    run_morris_analysis(problem, x, y, built_in_plots=False)
+    run_morris_analysis(problem, x, y, built_in_plots=True)
 except:
     msg = "\t-> Number of samples in model output file must be a multiple of (D+1),\n" \
           "\t   where D is the number of parameters (or groups) in your parameter file."

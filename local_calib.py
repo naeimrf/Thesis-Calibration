@@ -104,12 +104,12 @@ def make_joint_distribution(buildings, acceptable, res_path, discrete, plot=True
     if plot:
         # https://seaborn.pydata.org/tutorial/color_palettes.html
         df_tmp = df.copy()
-        df_tmp.loc[:, 'Buildings'] = 'Explained'
+        df_tmp.loc[:, 'Buildings'] = 'Matched'
         g = sns.pairplot(df_tmp, hue="Buildings", palette="Set2", diag_kind="kde", height=1.5)
         g.map_diag(sns.histplot, hue=None, color=".3", bins=discrete)
         # g.map_offdiag(sns.regplot)
-        g.map_upper(sns.regplot)
-        g.map_lower(sns.kdeplot, levels=discrete, color="k", shade=True)
+        g.map_upper(sns.regplot, line_kws={'color':'red'})
+        g.map_lower(sns.kdeplot, levels=4, color="k", shade=True)
         g.map_lower(get_correlation_spearmanr, cmap=plt.get_cmap('vlag'), norm=plt.Normalize(vmin=-.5, vmax=.5))
         fig = plt.gcf()
         fig.canvas.set_window_title(f'Possible correlations among {df_tmp.shape[0]}'
@@ -193,7 +193,7 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
 
         for i, j, k in zip(plots_mtx, combs, combinations_names):
             plt.subplot(len(var_names) - 1, len(var_names) - 1, i)
-            plt.scatter(y_transformed[j[0]], y_transformed[j[1]], marker='h', c='blue')
+            plt.scatter(y_transformed[j[0]], y_transformed[j[1]], marker='h', c='blue', s=4)
             plt.xlabel(k[0])
             plt.ylabel(k[1])
             plt.tight_layout()
@@ -407,7 +407,7 @@ def test_of_assumption_beta(buildings, acceptable, beta):
 
 
 def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings, final_samples=100,
-                               alpha=5, beta=85, discrete=5, all_plots=True, approach=1):
+                               alpha=5, beta=85, discrete=5, all_plots=True, t_sne=False, approach=1):
     """
     This function is based on Carlos Cerezo, et al's method published in 2017
     This method needs:
@@ -449,12 +449,13 @@ def calibrate_uncertain_params(params, params_ranges, nbr_sim_uncalib, buildings
     # * ALGORITHM STEP5: DISTRIBUTION GENERATION * * * * * * * * * * /
     calib_params = make_joint_distribution(buildings, acceptable, res_path, discrete, plot=all_plots)
 
-    if all_plots:
+    if t_sne:
         lp.make_t_SNE_plot(calib_params)
 
     # Plot below provides more insight to possible correlations of parameters /
-    # if all_plots: # FIXME: AN EXTRA PLOT, CORRELATION OF PARAMETERS, UNCOMMENT TO SEE.
-    #    plot_joint_distributions(calib_params, discrete)
+    if all_plots:
+        lp.distribution_plots_calibrated(calib_params, Bounds, discrete, NbRuns)
+        lp.plot_joint_distributions(calib_params)
 
     calib_frequencies = lp.plot_calibrated_parameters(calib_params, Bounds, discrete, NbRuns, alpha, plot=all_plots)
 
@@ -498,10 +499,16 @@ def return_best_combination_for_each_building(path, params_build, errors, param_
     return df
 
 
-def recursive_calibration(buildings, CaseName, alpha=5, beta=85, iterations=2):
+def recursive_calibration_with_incrementing_alpha(buildings, CaseName, alpha=5, beta=85, iterations=2):
     """
+    * This is a experimental attempt and is not presented in the report!
     This function works if RECURSIVE_CALIBRATION is set to 'True'
     It is an attempt to find calibrated parameters with less computational resources.
+    It works based on initial calibrated parameters based on alpha value, if a building cannot pass beta condition
+    the method recursively increases the alpha value ofr that particular building until it can pass beta condition.
+    Finally with beta=100% it creates a covariance matrix to take samples for another calibration iteration.
+    This function can suffer from possible low number of passed values even after beta=100%. It can stop due to singular
+    matrix problem when the function wants to generate covariance matrix for sampling from calibrated parameters!
     """
     parent_folder = os.getcwd()
     if os.path.exists('./CSV/'):
@@ -518,7 +525,7 @@ def recursive_calibration(buildings, CaseName, alpha=5, beta=85, iterations=2):
         builder = LocalBuilder()
         if iteration > 0:
             # First simulation run to get uncalibrated parameters
-            # After the first run we read calibrated parameters from previous run
+            # After the first run we read calibrated parameters from previous the run
             os.chdir(parent_folder)
             ls.CALIBRATE_WITH_CALIBRATED_PARAMETERS = True
         builder.run(CaseName)
@@ -580,7 +587,7 @@ def recursive_calibration(buildings, CaseName, alpha=5, beta=85, iterations=2):
         converge = np.array([j for sub in converge for j in sub])
         if all(converge < alpha):
             with open('converge.txt', 'w') as file:
-                file.write(json.dumps(iterations_best_results)) # use `json.loads` to do the reverse
+                file.write(json.dumps(iterations_best_results))  # use `json.loads` to do the reverse
             return iterations_best_results
 
         os.chdir(parent_folder)
@@ -591,7 +598,8 @@ def recursive_calibration(buildings, CaseName, alpha=5, beta=85, iterations=2):
 # CALIBRATION RUN * * * * * * * *
 if __name__ == '__main__':
     if RECURSIVE_CALIBRATION:
-        best_results = recursive_calibration(BuildNum, CaseName, alpha=15, beta=85, iterations=3)
+        best_results = recursive_calibration_with_incrementing_alpha(BuildNum
+                                    , CaseName, alpha=5, beta=85, iterations=3)
         lp.plot_recursive_improvement(best_results)
     else:
         if CALIBRATE_WITH_CALIBRATED_PARAMETERS:
@@ -604,17 +612,16 @@ if __name__ == '__main__':
             _ = return_best_combination_for_each_building(res_path, params_build, errors, VarName2Change)
 
             # TODO: BELOW ARE DUMMY VALUES, FIX IT!
-            n = 1000
-            u1 = 5
-            u2 = 5
+            n = 1000; u1 = 5; u2 = 5
             series1 = u1 + np.random.randn(n)
             series2 = u2 + np.random.randn(n)
             # lp.plot_metered_vs_simulated_energies(series1, series2, bins=20)
             print(f'** Illustration of the results by calibrated parameters is over *')
         else:
             # alpha=5%, based on ASHRAE Guideline 14–2002
-            calibrate_uncertain_params(VarName2Change, Bounds, NbRuns, BuildNum, alpha=5,
-                                       beta=90, final_samples=100, discrete=sample_nbr, all_plots=False, approach=1)
+            calibrate_uncertain_params(VarName2Change, Bounds, NbRuns, BuildNum, alpha=5, beta=90,
+                                       final_samples=100, discrete=sample_nbr,
+                                       all_plots=False, t_sne=False, approach=1)
 
             print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
                   f" {round(((time.time() - start_time) / 60), 2)}min!")

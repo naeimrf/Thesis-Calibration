@@ -1,3 +1,5 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np, seaborn as sns, pandas as pd
 import local_utility as lu
@@ -124,7 +126,7 @@ def passed_cases_one_building(error_dict, nbr, alpha):
     plt.axhline(y=alpha, color='r', linestyle='--')
 
     y = min(error_dict[nbr].values())
-    plt.annotate(str(round(y, 2))+"%", (np.argmin(error_to_plot), y),
+    plt.annotate(str(round(y, 2)) + "%", (np.argmin(error_to_plot), y),
                  xytext=(0, 10), textcoords="offset points", ha='center')
 
     plt.xlabel(f'Number of simulations for building {nbr}')
@@ -162,7 +164,7 @@ def passed_cases_all_buildings(error_dict, alpha):
         min_value = min_error_per_building[id][0]
         min_idx = min_error_per_building[id][1]
         color = 'k' if min_value <= alpha else 'r'
-        plt.annotate((str(round(min_value, 2))+"%", id), (min_idx, min_value),
+        plt.annotate((str(round(min_value, 2)) + "%", id), (min_idx, min_value),
                      xytext=(0, 10), textcoords="offset points", ha='center', color=color)
 
     plt.xlabel(f'Number of all simulations for buildings: {[i for i in building_ids]}')
@@ -239,10 +241,11 @@ def plot_combinations(var_names, bounds, combs, points, sample_nbr):
     plt.show()
 
 
-def plot_joint_distributions(data_frame, discrete):
+def plot_joint_distributions(data_frame):
     del data_frame['Buildings']
 
     sns.set_theme(style="white")
+    # sns.palplot(sns.color_palette("BrBG", 12))
     cmap = sns.cubehelix_palette(light=1.5, as_cmap=True)
 
     header = list(data_frame.columns)
@@ -253,8 +256,9 @@ def plot_joint_distributions(data_frame, discrete):
     i = 0
     for key in graph:
         graph[key] = sns.JointGrid(data=data_frame, x=header[0], y=header[i + 1], space=0)
+        graph[key].set_axis_labels(fontsize=12)
         graph[key].plot_joint(sns.kdeplot, fill=True, clip=((Bounds[0]), (Bounds[i + 1])),
-                              thresh=0, levels=discrete, cmap=cmap).plot_joint(sns.scatterplot)
+                              thresh=0, levels=5, cmap=cmap).plot_joint(sns.scatterplot)
         graph[key].plot_marginals(sns.histplot, color="gray", alpha=1, bins=5)
         graph[key].savefig(f'{key}.png')
         plt.close(fig=None)
@@ -397,7 +401,7 @@ def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
                          fontsize=8)
 
     nbrs = range(len(flat_data[0]))
-    scope = ((dimensions[0].bounds[1] - dimensions[0].bounds[0])/sample_nbr)/2
+    scope = ((dimensions[0].bounds[1] - dimensions[0].bounds[0]) / sample_nbr) / 2
     plt.errorbar(nbrs, flat_data[0], yerr=scope, ecolor='lightsteelblue', ls='none', capsize=4)
     plt.xticks(nbrs)
     plt.xlabel('Number of samples')
@@ -432,7 +436,6 @@ def plot_recursive_improvement(result_dict):
     plt.show()
 
 
-
 def make_t_SNE_plot(calib_params):
     # The method is inspired by Narine Kokhlikyan's code in scikit-learn website:
     # https://scikit-learn.org/stable/auto_examples/manifold/plot_t_sne_perplexity.html#sphx-glr-auto-examples-manifold-plot-t-sne-perplexity-py
@@ -442,7 +445,12 @@ def make_t_SNE_plot(calib_params):
     df_tmp = calib_params.drop('Buildings', 1)  # 0 for rows and 1 for columns
     parameters = len(df_tmp.columns)
 
-    print(f"\t-> Calibration in buildings: {set(target)} consists of {n_samples} combinations of {parameters} parameters")
+    if n_samples <= 100:
+        method = 'exact'
+    else:
+        method = 'barnes_hut'
+    print(
+        f"\t-> Calibration in buildings: {set(target)} consists of {n_samples} combinations of {parameters} parameters")
     perplexities = (5, 30, 50, 100)
     learning_rates = (100, 200, 400)
     # row: learning_rates, column: perplexities, figure-size
@@ -454,7 +462,7 @@ def make_t_SNE_plot(calib_params):
             ax = subplots[j][i]
             t0 = time.time()
             # fit and transform with TSNE
-            t_sne = TSNE(n_components=2, perplexity=perplexity, method='exact',
+            t_sne = TSNE(n_components=2, perplexity=perplexity, method=method,
                          learning_rate=learning_rate, n_iter=5000, verbose=0)
             # project the data in 2D
             y = t_sne.fit_transform(df_tmp)
@@ -470,10 +478,32 @@ def make_t_SNE_plot(calib_params):
 
             t1 = time.time()
             print(f"\t-> t_SNE plot, perplexity:{perplexity} and learning_rate:"
-                  f"{learning_rate} in {round((t1-t0), 2)}s")
+                  f"{learning_rate} in {round((t1 - t0), 2)}s")
 
     t11 = time.time()
     fig.canvas.set_window_title('t-SNE plots for calibrated parameters, columns: perplexities, rows: learning_rates')
     plt.tight_layout()
     plt.show()
-    print(f"\t+ The t_SNE_plot method is over in {round((t00-t11), 2)}s!")
+    print(f"\t+ The t_SNE_plot method is over in {round((t11 - t00), 2)}s!")
+
+
+def distribution_plots_calibrated(calib_params, Bounds, discrete, NbRuns):
+    calib_params = calib_params.drop('Buildings', 1)
+
+    nbr_params = len(list(calib_params.columns))
+    theoretical_freq = [[1 / discrete] * discrete] * nbr_params
+
+    f, axes = plt.subplots(1, nbr_params, figsize=(10, 3), sharey='all')
+    sns.set(style="white", palette="muted", color_codes=True)
+
+    for param, x in zip(calib_params.columns, range(nbr_params)):
+        axes[x].axhline(y=theoretical_freq[x][0], linewidth=1.5,
+                        linestyle="--", color='gray') # xmin=Bounds[x][0], xmax=Bounds[x][1]
+        sns.histplot(calib_params[param], kde=True, ax=axes[x], stat='probability',
+                     line_kws={"lw": 1.5}, color="darkgreen", bins=discrete)
+        axes[x].set_xlim(Bounds[x])
+
+    plt.setp(axes, yticks=[])
+    f.canvas.set_window_title(f'Calibrated parameter ranges with {NbRuns} samples')
+    plt.tight_layout()
+    plt.show()
