@@ -149,7 +149,19 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
     # print(f'covariance_matrix:\n{covariance_matrix}')
     # Generate samples from all independent normally distributed random variables
     # (with mean 0 and std. dev. 1)
-    x = stats.norm.rvs(size=(len(var_names), nbr_samples))
+    # x = stats.norm.rvs(size=(len(var_names), nbr_samples))
+    problem = {
+        'num_vars': len(var_names),
+        'names': var_names,
+        'bounds': [[0, 1]] * len(var_names)
+    }
+    xx = latin.sample(problem, int(nbr_samples))
+    z = []
+    for i in range(xx.shape[1]):
+        xx[:, i] = stats.norm.ppf(xx[:, i], 0, 1)
+        tmp = xx[:, i]
+        z.append(tmp)
+    xx = np.array(z)
 
     if cholesky:
         # Compute the Cholesky decomposition.
@@ -161,7 +173,7 @@ def make_random_from_correlated(data, var_names, nbr_samples, cholesky=True, plo
         c = np.dot(evecs, np.diag(np.sqrt(evals)))
 
     # Convert the data to correlated random variables
-    y = np.dot(c, x)
+    y = np.dot(c, xx)
 
     y_transformed = []
     if not isinstance(data, np.ndarray):
@@ -608,7 +620,7 @@ if __name__ == '__main__':
             sim_data, model_area = lu.read_simulation_files(res_path)
             total_sim_results, _, errors, acceptable = \
                 compare_results(BuildNum, sim_data, total_epc, model_area, alpha=5,
-                                per_building=False, all_buildings=True, plots=True)
+                                per_building=True, all_buildings=True, plots=True)
             _ = return_best_combination_for_each_building(res_path, params_build, errors, VarName2Change)
 
             # TODO: BELOW ARE DUMMY VALUES, FIX IT!
@@ -620,8 +632,8 @@ if __name__ == '__main__':
         else:
             # alpha=5%, based on ASHRAE Guideline 14–2002
             calibrate_uncertain_params(VarName2Change, Bounds, NbRuns, BuildNum, alpha=5, beta=90,
-                                       final_samples=100, discrete=sample_nbr,
-                                       all_plots=False, t_sne=False, approach=1)
+                                       final_samples=126, discrete=sample_nbr,
+                                       all_plots=True, t_sne=False, approach=1)
 
             print(f"* Execution time:{round((time.time() - start_time), 2)}s /"
                   f" {round(((time.time() - start_time) / 60), 2)}min!")
