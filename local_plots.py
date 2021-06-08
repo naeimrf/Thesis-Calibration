@@ -311,7 +311,7 @@ def rand_plot_1d(xx, nbr_samples, message, space, color='b*'):
 def generate_randomness(dimensions, nbr_samples, space):
     """
     The purpose of this method is to compare randomness of different algorithms in sikit-optimization package
-    with Latin HyperCube msampler in SALib
+    with Latin HyperCube sampler in SALib
     https://scikit-optimize.github.io/stable/auto_examples/sampler/initial-sampling-method.html#pdist-boxplot-of-all-methods
     https://github.com/SALib/SALib
     """
@@ -373,6 +373,25 @@ def generate_randomness(dimensions, nbr_samples, space):
     plt.show()
 
     return centered, salib
+
+
+def compare_SALib_LHC_with_rvs_scipy(nbr_samples, space):
+    fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(10, 3), sharex='all', sharey='all')
+    plt.subplot(1, 3, 1)
+    problem = {'names': 'x1', 'bounds': [[space.bounds[0][0], space.bounds[0][1]]], 'num_vars': 1}
+    salib = latin.sample(problem, nbr_samples)
+    rand_plot_1d(salib, nbr_samples, 'SALib-LHC', space, color='mx')
+
+    plt.subplot(1, 3, 2)
+    rvs_samples = stats.norm.rvs(size=(1, nbr_samples))
+    rand_plot_1d(rvs_samples, nbr_samples, 'Scipy-rvs_norm', space, color='bx')
+
+    plt.subplot(1, 3, 3)
+    rvs_samples = stats.uniform.rvs(loc=-2, scale=4, size=nbr_samples)
+    rand_plot_1d(rvs_samples, nbr_samples, 'Scipy-rvs_uniform', space, color='gx')
+
+    #plt.tight_layout()
+    plt.show()
 
 
 def compare2_methods(centered, salib, dimensions, sample_nbr, name1, name2):
